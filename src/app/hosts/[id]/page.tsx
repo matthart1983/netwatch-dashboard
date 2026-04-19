@@ -638,8 +638,9 @@ export default function HostDetailPage() {
       <div className="px-4 pt-4 pb-8 sm:px-6 lg:px-8">
         {/* ═══ Overview tab ═══ */}
         {activeTab === 'overview' && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="space-y-3">
+            {/* Live stat tiles — 6 across, tighter padding */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
               <LiveStatCard label="CPU" value={cpuStats.current != null ? `${cpuStats.current.toFixed(1)}%` : '—'} delta={getDeltaInfo(cpuStats.current, cpuStats.avg)} valueColor={getStatColor(cpuStats.current, 80, 95)} />
               <LiveStatCard label="Memory" value={memPct != null ? `${memPct.toFixed(1)}%` : '—'} delta={getDeltaInfo(memPct, memAvgPct)} valueColor={getStatColor(memPct, 85)} />
               <LiveStatCard label="Load 1m" value={loadStats.current != null ? loadStats.current.toFixed(2) : '—'} delta={getDeltaInfo(loadStats.current, loadStats.avg)} valueColor={getStatColor(loadStats.current, host.cpu_cores ?? 999)} />
@@ -648,26 +649,61 @@ export default function HostDetailPage() {
               <LiveStatCard label="Connections" value={connStats.current != null ? connStats.current.toFixed(0) : '—'} delta={getDeltaInfo(connStats.current, connStats.avg)} valueColor="text-zinc-100" />
             </div>
 
-            {/* Mini sparklines — three concerns at a glance */}
+            {/* Sparklines — three concerns at a glance */}
             {chartData.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                 <OverviewSparkline title="Gateway RTT (ms)" data={chartData} dataKey="gateway_rtt" stroke="#34d399" />
                 <OverviewSparkline title="CPU %" data={chartData} dataKey="cpu" stroke="#fbbf24" />
                 <OverviewSparkline title="Network RX+TX (KB/s)" data={chartData} dataKey="net_rx_rate" stroke="#60a5fa" stroke2="#a78bfa" dataKey2="net_tx_rate" />
               </div>
             )}
 
-            {/* Issues, if any */}
-            {health.issues.length > 0 && (
-              <div className="nw-card rounded-[1.3rem] p-4">
-                <div className="text-xs uppercase tracking-wider nw-subtle mb-2">Current concerns</div>
-                <ul className="text-sm space-y-1">
-                  {health.issues.map((issue, i) => (
-                    <li key={i} className="text-yellow-400">• {issue}</li>
-                  ))}
-                </ul>
+            {/* Health line — GW + DNS on one row, TUI-style */}
+            {latest && (latest.gateway_rtt_ms != null || latest.dns_rtt_ms != null) && (
+              <div className="nw-card rounded-[1rem] px-3 py-2 flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
+                <span className="text-xs uppercase tracking-wider nw-subtle">Health</span>
+                {latest.gateway_rtt_ms != null && (
+                  <span className="flex items-baseline gap-2">
+                    <span className="text-xs nw-subtle">GW</span>
+                    <span className={`tabular-nums font-medium ${getStatColor(latest.gateway_rtt_ms, 100, 250)}`}>{latest.gateway_rtt_ms.toFixed(1)}ms</span>
+                    {latest.gateway_loss_pct != null && (
+                      <span className={`text-xs tabular-nums ${latest.gateway_loss_pct > 5 ? 'text-red-400' : 'nw-muted'}`}>
+                        {latest.gateway_loss_pct.toFixed(0)}% loss
+                      </span>
+                    )}
+                  </span>
+                )}
+                {latest.dns_rtt_ms != null && (
+                  <span className="flex items-baseline gap-2">
+                    <span className="text-xs nw-subtle">DNS</span>
+                    <span className={`tabular-nums font-medium ${getStatColor(latest.dns_rtt_ms, 50, 200)}`}>{latest.dns_rtt_ms.toFixed(1)}ms</span>
+                    {latest.dns_loss_pct != null && (
+                      <span className={`text-xs tabular-nums ${latest.dns_loss_pct > 5 ? 'text-red-400' : 'nw-muted'}`}>
+                        {latest.dns_loss_pct.toFixed(0)}% loss
+                      </span>
+                    )}
+                  </span>
+                )}
+                {latest.tcp_time_wait != null && (
+                  <span className="text-xs nw-muted tabular-nums">TIME_WAIT {latest.tcp_time_wait}</span>
+                )}
+                {latest.tcp_close_wait != null && (
+                  <span className="text-xs nw-muted tabular-nums">CLOSE_WAIT {latest.tcp_close_wait}</span>
+                )}
               </div>
             )}
+
+            {/* Top processes + Top connections side-by-side */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+              <OverviewTopProcesses processes={processes} onExpand={() => setActiveTab('processes')} />
+              <OverviewTopConnections connections={connections} onExpand={() => setActiveTab('connections')} />
+            </div>
+
+            {/* DNS summary + Recent alerts side-by-side */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+              <OverviewDnsSummary dns={dns} onExpand={() => setActiveTab('dns')} />
+              <OverviewRecentAlerts alerts={alerts} issues={health.issues} rangeLabel={range} onExpand={() => setActiveTab('alerts')} />
+            </div>
           </div>
         )}
 
@@ -936,6 +972,154 @@ function InfoItem({ label, value }: { label: string; value: string }) {
     <div className="nw-card-soft rounded-[1rem] p-3">
       <div className="text-xs uppercase tracking-[0.16em] nw-subtle">{label}</div>
       <div className="text-sm font-medium truncate">{value}</div>
+    </div>
+  )
+}
+
+function OverviewTopProcesses({ processes, onExpand }: {
+  processes: ProcessRow[]
+  onExpand: () => void
+}) {
+  const top = [...processes].sort((a, b) => (b.rx_rate_bps + b.tx_rate_bps) - (a.rx_rate_bps + a.tx_rate_bps)).slice(0, 6)
+  return (
+    <div className="nw-card rounded-[1rem] overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/6">
+        <span className="text-xs uppercase tracking-wider nw-subtle">Top processes</span>
+        <button onClick={onExpand} className="text-xs nw-muted hover:text-zinc-200">all →</button>
+      </div>
+      {top.length === 0 ? (
+        <p className="nw-muted text-xs px-3 py-2">No process bandwidth data yet.</p>
+      ) : (
+        <table className="w-full text-xs">
+          <tbody>
+            {top.map((p, i) => (
+              <tr key={`${p.process_name}-${p.pid ?? i}`} className="border-b border-white/5 last:border-b-0">
+                <td className="px-3 py-1 text-zinc-200 truncate max-w-[200px]">{p.process_name}</td>
+                <td className="px-2 py-1 text-right tabular-nums nw-muted w-12">{p.connection_count}c</td>
+                <td className="px-2 py-1 text-right tabular-nums text-emerald-400 w-20">↓{formatBps(p.rx_rate_bps)}</td>
+                <td className="px-3 py-1 text-right tabular-nums text-blue-400 w-20">↑{formatBps(p.tx_rate_bps)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+function OverviewTopConnections({ connections, onExpand }: {
+  connections: ConnectionRow[]
+  onExpand: () => void
+}) {
+  const top = connections
+    .filter(c => c.state === 'ESTABLISHED')
+    .slice(0, 8)
+  return (
+    <div className="nw-card rounded-[1rem] overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/6">
+        <span className="text-xs uppercase tracking-wider nw-subtle">Established connections</span>
+        <button onClick={onExpand} className="text-xs nw-muted hover:text-zinc-200">all →</button>
+      </div>
+      {top.length === 0 ? (
+        <p className="nw-muted text-xs px-3 py-2">No connection data yet.</p>
+      ) : (
+        <table className="w-full text-xs">
+          <tbody>
+            {top.map((c, i) => (
+              <tr key={`${c.local_addr}-${c.remote_addr}-${i}`} className="border-b border-white/5 last:border-b-0">
+                <td className="px-3 py-1 nw-muted w-10">{c.protocol}</td>
+                <td className="px-2 py-1 text-zinc-200 truncate max-w-[120px]">{c.process_name ?? '—'}</td>
+                <td className="px-2 py-1 tabular-nums nw-muted truncate max-w-[180px]">{c.remote_addr}</td>
+                <td className="px-3 py-1 text-right tabular-nums nw-muted w-16">
+                  {c.kernel_rtt_us != null ? `${(c.kernel_rtt_us / 1000).toFixed(1)}ms` : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+function OverviewDnsSummary({ dns, onExpand }: {
+  dns: DnsAnalytics | null
+  onExpand: () => void
+}) {
+  const hasData = dns != null && dns.total_queries > 0
+  const nxPct = hasData && dns!.total_responses > 0
+    ? ((dns!.nxdomain_count / dns!.total_responses) * 100)
+    : null
+  return (
+    <div className="nw-card rounded-[1rem] overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/6">
+        <span className="text-xs uppercase tracking-wider nw-subtle">DNS</span>
+        <button onClick={onExpand} className="text-xs nw-muted hover:text-zinc-200">detail →</button>
+      </div>
+      {!hasData ? (
+        <p className="nw-muted text-xs px-3 py-2">No DNS activity (requires packet capture).</p>
+      ) : (
+        <div className="px-3 py-2">
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+            <span className="flex items-baseline gap-1"><span className="font-semibold tabular-nums">{dns!.total_queries.toLocaleString()}</span> <span className="text-xs nw-subtle">queries</span></span>
+            {nxPct != null && (
+              <span className="flex items-baseline gap-1">
+                <span className={`font-semibold tabular-nums ${dns!.nxdomain_count > 0 ? 'text-yellow-400' : 'text-zinc-200'}`}>{nxPct.toFixed(1)}%</span>
+                <span className="text-xs nw-subtle">NXDOMAIN</span>
+              </span>
+            )}
+          </div>
+          {dns!.top_domains.length > 0 && (
+            <div className="mt-1.5 space-y-0.5 text-xs">
+              {dns!.top_domains.slice(0, 5).map(d => (
+                <div key={d.name} className="flex justify-between gap-2">
+                  <span className="truncate text-zinc-200">{d.name}</span>
+                  <span className="tabular-nums nw-muted">{d.count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OverviewRecentAlerts({ alerts, issues, rangeLabel, onExpand }: {
+  alerts: AgentAlert[]
+  issues: string[]
+  rangeLabel: string
+  onExpand: () => void
+}) {
+  const top = alerts.slice(0, 4)
+  const severityStyles: Record<AgentAlert['severity'], string> = {
+    warning: 'text-yellow-400',
+    critical: 'text-red-400',
+  }
+  return (
+    <div className="nw-card rounded-[1rem] overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/6">
+        <span className="text-xs uppercase tracking-wider nw-subtle">Recent alerts + concerns</span>
+        <button onClick={onExpand} className="text-xs nw-muted hover:text-zinc-200">all →</button>
+      </div>
+      {top.length === 0 && issues.length === 0 ? (
+        <p className="nw-muted text-xs px-3 py-2">All clear in the last {rangeLabel}.</p>
+      ) : (
+        <ul className="text-xs">
+          {top.map(a => (
+            <li key={a.id} className="flex items-baseline gap-2 px-3 py-1 border-b border-white/5 last:border-b-0">
+              <span className={`font-semibold w-12 shrink-0 ${severityStyles[a.severity]}`}>{a.severity}</span>
+              <span className="truncate text-zinc-200">{a.message}</span>
+            </li>
+          ))}
+          {issues.slice(0, 4 - top.length).map((issue, i) => (
+            <li key={`issue-${i}`} className="flex items-baseline gap-2 px-3 py-1 border-b border-white/5 last:border-b-0">
+              <span className="text-yellow-400 w-12 shrink-0">concern</span>
+              <span className="truncate text-zinc-200">{issue}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
