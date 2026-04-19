@@ -267,11 +267,21 @@ function Landing() {
           </div>
         </div>
 
-        <div className="space-y-4 lg:pl-4">
-          <DashboardMockup />
-          <div className="grid gap-4 md:grid-cols-2">
-            <ChartMockup />
-            <AlertMockup />
+        <div className="lg:pl-4">
+          <div className="nw-card rounded-[1.5rem] overflow-hidden border border-white/10 shadow-[0_30px_80px_rgba(0,0,0,0.45)]">
+            <video
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="metadata"
+              poster="/demo-poster.png"
+              className="w-full h-auto block"
+              aria-label="NetWatch Cloud dashboard demo"
+            >
+              <source src="/demo.webm" type="video/webm" />
+              <source src="/demo.mp4" type="video/mp4" />
+            </video>
           </div>
         </div>
       </section>
