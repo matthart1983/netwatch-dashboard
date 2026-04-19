@@ -8,8 +8,6 @@ const signedInLinks = [
   { href: '/', label: 'Fleet' },
   { href: '/alerts', label: 'Alerts' },
   { href: '/settings', label: 'Settings' },
-  { href: '/admin', label: 'Admin' },
-  { href: '/labs', label: 'Labs' },
 ]
 
 export function Nav() {

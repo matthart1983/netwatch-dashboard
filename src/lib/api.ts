@@ -1,6 +1,6 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
 
-async function fetchAPI(path: string, options: RequestInit = {}) {
+export async function fetchAPI(path: string, options: RequestInit = {}) {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
 
   const res = await fetch(`${API_URL}${path}`, {
@@ -291,7 +291,6 @@ export interface AccountInfo {
   email: string
   created_at: string
   plan: string
-  trial_ends_at: string | null
   notify_email: boolean
   has_slack_webhook: boolean
 }
@@ -307,28 +306,5 @@ export async function updateAccount(data: { notify_email?: boolean; slack_webhoo
   })
 }
 
-export interface AdminAccountRow {
-  id: string
-  email: string
-  plan: string
-  created_at: string
-  host_count: number
-  snapshot_count: number
-  last_active: string | null
-  any_online: boolean
-  api_key_count: number
-}
-
-export interface AdminOverview {
-  summary: {
-    total_accounts: number
-    total_hosts: number
-    online_hosts: number
-    total_snapshots: number
-  }
-  accounts: AdminAccountRow[]
-}
-
-export async function getAdminOverview(): Promise<AdminOverview> {
-  return fetchAPI('/api/v1/admin/overview')
-}
+// Admin types + fetchers have moved to api-commercial.ts so the OSS mirror
+// can exclude them. See STRATEGY.md.

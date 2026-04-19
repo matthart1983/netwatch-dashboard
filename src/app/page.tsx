@@ -21,7 +21,6 @@ const marketingLinks = [
   { href: '#features', label: 'Features' },
   { href: '#how-it-works', label: 'How it works' },
   { href: '#security', label: 'Security' },
-  { href: '/labs', label: 'Labs' },
 ]
 
 function LandingNav() {
@@ -532,7 +531,6 @@ function Landing() {
             >
               essh ↗
             </a>
-            <Link href="/labs" className="hover:text-[var(--nw-text)] transition-colors">Labs</Link>
             <a href="#features" className="hover:text-[var(--nw-text)] transition-colors">Features</a>
             <a href="mailto:admin@netwatchlabs.com" className="hover:text-[var(--nw-text)] transition-colors">Contact</a>
           </div>

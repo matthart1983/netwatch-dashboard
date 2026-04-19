@@ -1,14 +1,7 @@
 {
   "name": "netwatch-dashboard",
   "version": "0.1.0",
-  "private": false,
-  "description": "Web dashboard for NetWatch Cloud — Next.js UI that talks to the hosted SaaS backend.",
-  "license": "MIT",
-  "homepage": "https://github.com/matthart1983/netwatch-dashboard",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/matthart1983/netwatch-dashboard.git"
-  },
+  "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
