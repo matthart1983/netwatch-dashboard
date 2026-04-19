@@ -1,8 +1,10 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
+import { getAlertHistory } from '@/lib/api'
 
 const signedInLinks = [
   { href: '/', label: 'Fleet' },
@@ -13,6 +15,23 @@ const signedInLinks = [
 export function Nav() {
   const { token, isLoading, logout } = useAuth()
   const pathname = usePathname()
+  const [firingCount, setFiringCount] = useState(0)
+
+  // Poll firing alerts count every 30s so the nav badge stays accurate
+  // across tabs. Silent on error.
+  useEffect(() => {
+    if (!token) { setFiringCount(0); return }
+    let cancelled = false
+    const load = async () => {
+      try {
+        const events = await getAlertHistory()
+        if (!cancelled) setFiringCount(events.filter(e => e.state === 'firing').length)
+      } catch { /* ignore */ }
+    }
+    void load()
+    const id = setInterval(load, 30_000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [token])
 
   // Landing page and Labs pages have their own navs
   if (!isLoading && !token && pathname === '/') return null
@@ -47,18 +66,24 @@ export function Nav() {
                     const isActive = link.href === '/'
                       ? pathname === '/'
                       : pathname?.startsWith(link.href)
+                    const showBadge = link.href === '/alerts' && firingCount > 0
 
                     return (
                       <Link
                         key={link.href}
                         href={link.href}
-                        className={`rounded-full px-3 py-2 text-sm font-medium transition-colors ${
+                        className={`flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-colors ${
                           isActive
                             ? 'bg-[rgba(61,214,198,0.16)] text-[var(--nw-text)]'
                             : 'text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'
                         } shrink-0`}
                       >
                         {link.label}
+                        {showBadge && (
+                          <span className="rounded-full bg-red-500/20 text-red-400 px-1.5 py-0.5 text-[10px] font-semibold">
+                            {firingCount}
+                          </span>
+                        )}
                       </Link>
                     )
                   })}

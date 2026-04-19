@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import {
   getHost, getMetrics, getAgentAlerts, getProcesses, getConnections, getDnsAnalytics,
@@ -12,7 +12,23 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import {
   ChevronDown, ChevronRight, ChevronUp, Pause, Circle,
   GripVertical, Maximize2, Minimize2, Lock, Unlock, RotateCcw,
+  Activity, BarChart3, Cpu, Network, Globe, Bell, Info,
+  Search, X as XIcon, ArrowUpDown, ArrowUp, ArrowDown,
 } from 'lucide-react'
+
+// ─── Tabs ────────────────────────────────────────────────────
+
+type TabId = 'overview' | 'charts' | 'processes' | 'connections' | 'dns' | 'alerts' | 'info'
+
+const TABS: { id: TabId; label: string; hotkey: string; icon: typeof Activity }[] = [
+  { id: 'overview',    label: 'Overview',    hotkey: '1', icon: Activity },
+  { id: 'charts',      label: 'Charts',      hotkey: '2', icon: BarChart3 },
+  { id: 'processes',   label: 'Processes',   hotkey: '3', icon: Cpu },
+  { id: 'connections', label: 'Connections', hotkey: '4', icon: Network },
+  { id: 'dns',         label: 'DNS',         hotkey: '5', icon: Globe },
+  { id: 'alerts',      label: 'Alerts',      hotkey: '6', icon: Bell },
+  { id: 'info',        label: 'Info',        hotkey: '7', icon: Info },
+]
 
 // ─── Constants ───────────────────────────────────────────────
 
@@ -221,23 +237,41 @@ export default function HostDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { token, isLoading: authLoading } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [host, setHost] = useState<Host | null>(null)
   const [points, setPoints] = useState<MetricPoint[]>([])
   const [alerts, setAlerts] = useState<AgentAlert[]>([])
   const [processes, setProcesses] = useState<ProcessRow[]>([])
   const [connections, setConnections] = useState<ConnectionRow[]>([])
   const [dns, setDns] = useState<DnsAnalytics | null>(null)
-  const [alertsOpen, setAlertsOpen] = useState(true)
-  const [processesOpen, setProcessesOpen] = useState(true)
-  const [connectionsOpen, setConnectionsOpen] = useState(false)
-  const [dnsOpen, setDnsOpen] = useState(true)
   const [range, setRange] = useState<TimeRange>('24h')
   const [loading, setLoading] = useState(true)
   const [paused, setPaused] = useState(false)
   const [lastFetch, setLastFetch] = useState<Date | null>(null)
   const [secondsAgo, setSecondsAgo] = useState(0)
-  const [hostInfoOpen, setHostInfoOpen] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Tab state — URL-synced via ?tab=X. Default: overview.
+  const tabFromUrl = searchParams?.get('tab') as TabId | null
+  const activeTab: TabId = TABS.find(t => t.id === tabFromUrl)?.id ?? 'overview'
+
+  // UI polish: help overlay (? to open), density toggle (persisted).
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [dense, setDense] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem('nw-density') === 'dense'
+  })
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    localStorage.setItem('nw-density', dense ? 'dense' : 'normal')
+  }, [dense])
+  const setActiveTab = useCallback((next: TabId) => {
+    const params = new URLSearchParams(searchParams?.toString() ?? '')
+    if (next === 'overview') params.delete('tab')
+    else params.set('tab', next)
+    const qs = params.toString()
+    router.replace(qs ? `?${qs}` : window.location.pathname, { scroll: false })
+  }, [router, searchParams])
 
   // Panel state
   const [dashState, setDashState] = useState<DashState>(() => loadDashState())
@@ -372,6 +406,46 @@ export default function HostDetailPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [maximizedPanel])
 
+  // Global hotkeys: 1–7 switch tabs, p pauses, r cycles time range. Ignored
+  // when the user is typing in an input/textarea/contenteditable.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      )) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+
+      // Tab hotkeys
+      const tab = TABS.find(t => t.hotkey === e.key)
+      if (tab) {
+        e.preventDefault()
+        setActiveTab(tab.id)
+        return
+      }
+      if (e.key === 'p') {
+        e.preventDefault()
+        setPaused(p => !p)
+      } else if (e.key === 'r') {
+        e.preventDefault()
+        const idx = RANGES.findIndex(r => r.value === range)
+        const next = RANGES[(idx + 1) % RANGES.length]
+        setRange(next.value)
+        setLoading(true)
+      } else if (e.key === '?') {
+        e.preventDefault()
+        setHelpOpen(o => !o)
+      } else if (e.key === 'Escape' && helpOpen) {
+        e.preventDefault()
+        setHelpOpen(false)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [setActiveTab, range, helpOpen])
+
   // Chart data (deduplicated)
   const chartData = useMemo(() => {
     const result: Record<string, unknown>[] = []
@@ -441,194 +515,254 @@ export default function HostDetailPage() {
     critical: 'bg-red-500/20 text-red-400 border-red-500/30',
   }
 
+  const noop = () => {}
+
   return (
     <div
+      data-density={dense ? 'dense' : 'normal'}
       className="-mt-8 pb-8"
       style={{ width: '100vw', marginLeft: 'calc(-50vw + 50%)' }}
     >
-      {/* === Health Summary Header === */}
-      <div className="sticky top-0 z-20 mb-4 border-b border-white/6 bg-[#08111a]/92 backdrop-blur-xl">
-        <div className="px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-3">
-            <div className="flex min-w-0 flex-wrap items-center gap-3">
-              <button onClick={() => router.push('/')} className="nw-button-ghost px-3 py-2 text-sm">Back</button>
-              <h1 className="min-w-0 flex-1 truncate text-xl font-semibold">{host.hostname}</h1>
+      <style>{`
+        [data-density='dense'] table td,
+        [data-density='dense'] table th { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+        [data-density='dense'] .nw-card li { padding-top: 0.4rem; padding-bottom: 0.4rem; }
+      `}</style>
+      {/* === Shell: compact header + tab strip === */}
+      <div className="sticky top-0 z-20 border-b border-white/6 bg-[#08111a]/92 backdrop-blur-xl">
+        <div className="px-4 pt-3 sm:px-6 lg:px-8">
+          {/* Row 1 — identity, health, age, live toggle */}
+          <div className="flex min-w-0 flex-wrap items-center gap-3 pb-2">
+            <button onClick={() => router.push('/')} className="nw-button-ghost px-3 py-1.5 text-sm">Back</button>
+            <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{host.hostname}</h1>
+            <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${statusColors[health.status]}`}>
+              {health.status === 'healthy' ? 'Healthy' : health.status === 'warning' ? 'Warning' : 'Critical'}
+            </span>
+            {alerts.length > 0 && (
               <button
-                onClick={() => setPaused(p => !p)}
-                className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                  paused
-                    ? 'bg-white/6 text-[var(--nw-text-muted)] border-white/10 hover:border-white/16'
-                    : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
-                }`}
+                onClick={() => setActiveTab('alerts')}
+                className="rounded-full border border-red-500/30 bg-red-500/20 px-2 py-0.5 text-xs font-medium text-red-400 hover:bg-red-500/30 transition-colors"
+                title="Jump to Alerts tab"
               >
-                {paused ? <><Pause size={12} /> Paused</> : <><Circle size={8} fill="currentColor" className="animate-pulse" /> Live</>}
+                {alerts.length} {alerts.length === 1 ? 'alert' : 'alerts'}
               </button>
+            )}
+            <div className="flex items-center gap-3 text-xs tabular-nums nw-subtle">
+              {lastSeenSecs != null && <span>Last seen {lastSeenSecs}s ago</span>}
+              {lastFetch && <span>{secondsAgo}s</span>}
             </div>
-            <div className="flex flex-wrap items-center gap-2 gap-y-2 sm:justify-between">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusColors[health.status]}`}>
-                  {health.status === 'healthy' ? 'Healthy' : health.status === 'warning' ? 'Warning' : 'Critical'}
-                </span>
-                {health.alertCount > 0 && (
-                  <span className="rounded-full border border-red-500/30 bg-red-500/20 px-2 py-0.5 text-xs font-medium text-red-400">
-                    {health.alertCount} {health.alertCount === 1 ? 'issue' : 'issues'}
-                  </span>
-                )}
-                {health.issues.length > 0 && (
-                  <span className="hidden max-w-xs truncate text-xs text-yellow-400 md:block">
-                    {health.issues[0]}
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs tabular-nums nw-subtle sm:justify-end">
-                {lastSeenSecs != null && <span>Last seen {lastSeenSecs}s ago</span>}
-                {lastFetch && <span>{secondsAgo}s ago</span>}
-              </div>
+            <button
+              onClick={() => setPaused(p => !p)}
+              title="Toggle live polling (p)"
+              className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                paused
+                  ? 'bg-white/6 text-[var(--nw-text-muted)] border-white/10 hover:border-white/16'
+                  : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
+              }`}
+            >
+              {paused ? <><Pause size={12} /> Paused</> : <><Circle size={8} fill="currentColor" className="animate-pulse" /> Live</>}
+            </button>
+            <button
+              onClick={() => setDense(d => !d)}
+              title={dense ? 'Normal density' : 'Dense mode'}
+              className={`rounded-full border px-2 py-1 text-xs font-medium transition-colors ${
+                dense
+                  ? 'bg-[rgba(61,214,198,0.15)] border-[rgba(61,214,198,0.35)] text-[var(--nw-text)]'
+                  : 'bg-white/6 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'
+              }`}
+            >
+              {dense ? '≡' : '≣'}
+            </button>
+            <button
+              onClick={() => setHelpOpen(true)}
+              title="Keyboard shortcuts (?)"
+              className="rounded-full border border-white/10 bg-white/6 px-2 py-1 text-xs font-medium text-[var(--nw-text-muted)] hover:text-[var(--nw-text)] transition-colors"
+            >
+              ?
+            </button>
+          </div>
+
+          {/* Row 2 — tab strip + time range */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1 overflow-x-auto">
+              {TABS.map(t => {
+                const Icon = t.icon
+                const isActive = activeTab === t.id
+                const count = t.id === 'alerts' ? alerts.length : undefined
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setActiveTab(t.id)}
+                    title={`${t.label} — press ${t.hotkey}`}
+                    className={`flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'border-[var(--nw-accent)] text-[var(--nw-text)]'
+                        : 'border-transparent text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'
+                    }`}
+                  >
+                    <Icon size={14} />
+                    <span>{t.label}</span>
+                    {count != null && count > 0 && (
+                      <span className="rounded-full bg-red-500/20 text-red-400 px-1.5 py-0.5 text-[10px] font-semibold">
+                        {count}
+                      </span>
+                    )}
+                    <span className="hidden sm:inline text-[10px] nw-subtle tabular-nums">{t.hotkey}</span>
+                  </button>
+                )
+              })}
             </div>
+            {/* Time range — hidden on tabs where it's irrelevant */}
+            {(activeTab === 'overview' || activeTab === 'charts' || activeTab === 'alerts') && (
+              <div className="flex items-center gap-2 pb-1">
+                <span className="text-[10px] uppercase tracking-wider nw-subtle">Range</span>
+                <div className="flex gap-1">
+                  {RANGES.map(r => (
+                    <button
+                      key={r.value}
+                      onClick={() => { setRange(r.value); setLoading(true) }}
+                      className={`nw-tab text-xs px-2 py-1`}
+                      data-active={range === r.value}
+                      title="Cycle with r"
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      <div className="px-4 sm:px-6 lg:px-8">
+      <div className="px-4 pt-4 pb-8 sm:px-6 lg:px-8">
+        {/* ═══ Overview tab ═══ */}
+        {activeTab === 'overview' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <LiveStatCard label="CPU" value={cpuStats.current != null ? `${cpuStats.current.toFixed(1)}%` : '—'} delta={getDeltaInfo(cpuStats.current, cpuStats.avg)} valueColor={getStatColor(cpuStats.current, 80, 95)} />
+              <LiveStatCard label="Memory" value={memPct != null ? `${memPct.toFixed(1)}%` : '—'} delta={getDeltaInfo(memPct, memAvgPct)} valueColor={getStatColor(memPct, 85)} />
+              <LiveStatCard label="Load 1m" value={loadStats.current != null ? loadStats.current.toFixed(2) : '—'} delta={getDeltaInfo(loadStats.current, loadStats.avg)} valueColor={getStatColor(loadStats.current, host.cpu_cores ?? 999)} />
+              <LiveStatCard label="Disk" value={diskStats.current != null ? `${diskStats.current.toFixed(1)}%` : '—'} delta={getDeltaInfo(diskStats.current, diskStats.avg)} valueColor={getStatColor(diskStats.current, 90)} />
+              <LiveStatCard label="Net RX/TX" value={rxStats.current != null && txStats.current != null ? `${formatRate(rxStats.current)} / ${formatRate(txStats.current)}` : '—'} delta={getDeltaInfo(rxStats.current != null && txStats.current != null ? rxStats.current + txStats.current : null, rxStats.avg != null && txStats.avg != null ? rxStats.avg + txStats.avg : null)} valueColor="text-zinc-100" />
+              <LiveStatCard label="Connections" value={connStats.current != null ? connStats.current.toFixed(0) : '—'} delta={getDeltaInfo(connStats.current, connStats.avg)} valueColor="text-zinc-100" />
+            </div>
 
-      {/* === Collapsible Host Info Panel === */}
-      <div className="mb-4">
-        <button
-          onClick={() => setHostInfoOpen(o => !o)}
-          className="flex items-center gap-2 text-sm nw-muted hover:text-[var(--nw-text)] transition-colors"
-        >
-          {hostInfoOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          <span className="font-medium">Host Information</span>
-          {!hostInfoOpen && (
-            <span className="text-xs text-zinc-600 ml-2">
-              {host.os || '—'} · {host.cpu_cores || '?'} cores · {host.memory_total_bytes ? formatBytes(host.memory_total_bytes) : '—'}
-            </span>
-          )}
-        </button>
-        {hostInfoOpen && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-            <InfoItem label="Hostname" value={host.hostname} />
-            <InfoItem label="OS" value={host.os || '—'} />
-            <InfoItem label="Kernel" value={host.kernel || '—'} />
-            <InfoItem label="CPU Model" value={host.cpu_model ? host.cpu_model.replace(/\(R\)|\(TM\)/g, '').split('@')[0].trim() : '—'} />
-            <InfoItem label="Cores" value={host.cpu_cores?.toString() || '—'} />
-            <InfoItem label="Memory" value={host.memory_total_bytes ? formatBytes(host.memory_total_bytes) : '—'} />
-            <InfoItem label="Uptime" value={host.uptime_secs ? formatUptime(host.uptime_secs) : '—'} />
-            <InfoItem label="Agent" value={host.agent_version || '—'} />
+            {/* Mini sparklines — three concerns at a glance */}
+            {chartData.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <OverviewSparkline title="Gateway RTT (ms)" data={chartData} dataKey="gateway_rtt" stroke="#34d399" />
+                <OverviewSparkline title="CPU %" data={chartData} dataKey="cpu" stroke="#fbbf24" />
+                <OverviewSparkline title="Network RX+TX (KB/s)" data={chartData} dataKey="net_rx_rate" stroke="#60a5fa" stroke2="#a78bfa" dataKey2="net_tx_rate" />
+              </div>
+            )}
+
+            {/* Issues, if any */}
+            {health.issues.length > 0 && (
+              <div className="nw-card rounded-[1.3rem] p-4">
+                <div className="text-xs uppercase tracking-wider nw-subtle mb-2">Current concerns</div>
+                <ul className="text-sm space-y-1">
+                  {health.issues.map((issue, i) => (
+                    <li key={i} className="text-yellow-400">• {issue}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ═══ Charts tab ═══ */}
+        {activeTab === 'charts' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={toggleLock}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                  locked ? 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/30' : 'bg-white/6 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)] border border-white/10'
+                }`}
+                title={locked ? 'Unlock panels' : 'Lock panels'}
+              >
+                {locked ? <Lock size={12} /> : <Unlock size={12} />}
+                {locked ? 'Locked' : 'Unlocked'}
+              </button>
+              <button
+                onClick={resetLayout}
+                className="flex items-center gap-1.5 rounded border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-medium text-[var(--nw-text-muted)] transition-colors hover:text-[var(--nw-text)]"
+                title="Reset layout and refresh"
+              >
+                <RotateCcw size={12} /> Reset
+              </button>
+            </div>
+            {chartData.length === 0 ? (
+              <p className="nw-muted">No data for this time range.</p>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {panelOrder.map(panelId => {
+                  const config = PANEL_CONFIGS.find(c => c.id === panelId)
+                  if (!config) return null
+                  const isWide = config.id === 'cpu-per-core'
+                  if (isWide && getCoreLines(chartData).length === 0) return null
+                  return (
+                    <div
+                      key={config.id}
+                      className={`${isWide ? 'lg:col-span-2' : ''} ${dragOver === config.id ? 'ring-2 ring-emerald-500/50 rounded-lg' : ''}`}
+                      style={{ height: collapsed[config.id] ? 'auto' : isWide ? 360 : 280 }}
+                      draggable={!locked}
+                      onDragStart={() => handleDragStart(config.id)}
+                      onDragOver={(e) => handleDragOver(e, config.id)}
+                      onDrop={() => handleDrop(config.id)}
+                      onDragEnd={handleDragEnd}
+                    >
+                      <ChartPanel
+                        config={config}
+                        data={chartData}
+                        isCollapsed={!!collapsed[config.id]}
+                        isLocked={locked}
+                        onToggleCollapse={() => toggleCollapse(config.id)}
+                        onMaximize={() => setMaximizedPanel(config.id)}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'processes' && (
+          <ProcessesPanel processes={processes} isOpen={true} onToggle={noop} />
+        )}
+        {activeTab === 'connections' && (
+          <ConnectionsPanel connections={connections} isOpen={true} onToggle={noop} />
+        )}
+        {activeTab === 'dns' && (
+          <DnsAnalyticsPanel dns={dns} isOpen={true} onToggle={noop} />
+        )}
+        {activeTab === 'alerts' && (
+          <AgentAlertsPanel alerts={alerts} isOpen={true} onToggle={noop} rangeLabel={range} />
+        )}
+
+        {/* ═══ Info tab ═══ */}
+        {activeTab === 'info' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <InfoItem label="Hostname" value={host.hostname} />
+              <InfoItem label="OS" value={host.os || '—'} />
+              <InfoItem label="Kernel" value={host.kernel || '—'} />
+              <InfoItem label="CPU Model" value={host.cpu_model ? host.cpu_model.replace(/\(R\)|\(TM\)/g, '').split('@')[0].trim() : '—'} />
+              <InfoItem label="Cores" value={host.cpu_cores?.toString() || '—'} />
+              <InfoItem label="Memory" value={host.memory_total_bytes ? formatBytes(host.memory_total_bytes) : '—'} />
+              <InfoItem label="Uptime" value={host.uptime_secs ? formatUptime(host.uptime_secs) : '—'} />
+              <InfoItem label="Agent" value={host.agent_version || '—'} />
+              <InfoItem label="Host ID" value={host.id} />
+              <InfoItem label="Last seen" value={lastSeenSecs != null ? `${lastSeenSecs}s ago` : '—'} />
+              <InfoItem label="Online" value={host.is_online ? 'Yes' : 'No'} />
+            </div>
           </div>
         )}
       </div>
 
-      {/* === Live Stats Bar === */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
-        <LiveStatCard label="CPU" value={cpuStats.current != null ? `${cpuStats.current.toFixed(1)}%` : '—'} delta={getDeltaInfo(cpuStats.current, cpuStats.avg)} valueColor={getStatColor(cpuStats.current, 80, 95)} />
-        <LiveStatCard label="Memory" value={memPct != null ? `${memPct.toFixed(1)}%` : '—'} delta={getDeltaInfo(memPct, memAvgPct)} valueColor={getStatColor(memPct, 85)} />
-        <LiveStatCard label="Load 1m" value={loadStats.current != null ? loadStats.current.toFixed(2) : '—'} delta={getDeltaInfo(loadStats.current, loadStats.avg)} valueColor={getStatColor(loadStats.current, host.cpu_cores ?? 999)} />
-        <LiveStatCard label="Disk" value={diskStats.current != null ? `${diskStats.current.toFixed(1)}%` : '—'} delta={getDeltaInfo(diskStats.current, diskStats.avg)} valueColor={getStatColor(diskStats.current, 90)} />
-        <LiveStatCard label="Net RX/TX" value={rxStats.current != null && txStats.current != null ? `${formatRate(rxStats.current)} / ${formatRate(txStats.current)}` : '—'} delta={getDeltaInfo(rxStats.current != null && txStats.current != null ? rxStats.current + txStats.current : null, rxStats.avg != null && txStats.avg != null ? rxStats.avg + txStats.avg : null)} valueColor="text-zinc-100" />
-        <LiveStatCard label="Connections" value={connStats.current != null ? connStats.current.toFixed(0) : '—'} delta={getDeltaInfo(connStats.current, connStats.avg)} valueColor="text-zinc-100" />
-      </div>
-
-      {/* === Time Range + Dashboard Toolbar === */}
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex gap-2">
-          {RANGES.map(r => (
-            <button
-              key={r.value}
-              onClick={() => { setRange(r.value); setLoading(true) }}
-              className={`nw-tab ${range === r.value ? '' : ''}`}
-              data-active={range === r.value}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={toggleLock}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-              locked ? 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/30' : 'bg-white/6 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)] border border-white/10'
-            }`}
-            title={locked ? 'Unlock panels' : 'Lock panels (prevent collapse)'}
-          >
-            {locked ? <Lock size={12} /> : <Unlock size={12} />}
-            {locked ? 'Locked' : 'Unlocked'}
-          </button>
-          <button
-            onClick={resetLayout}
-            className="flex items-center gap-1.5 rounded border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-medium text-[var(--nw-text-muted)] transition-colors hover:text-[var(--nw-text)]"
-            title="Reset panel layout and refresh host data"
-          >
-            <RotateCcw size={12} />
-            Reset View
-          </button>
-        </div>
-      </div>
-
-      {/* === Chart Grid === */}
-      {chartData.length === 0 ? (
-        <p className="nw-muted">No data for this time range.</p>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {panelOrder.map(panelId => {
-            const config = PANEL_CONFIGS.find(c => c.id === panelId)
-            if (!config) return null
-            const isWide = config.id === 'cpu-per-core'
-            // Skip rendering cpu-per-core entirely when no core data — avoids
-            // a stray empty grid row between the last chart and the panels
-            // below.
-            if (isWide && getCoreLines(chartData).length === 0) return null
-            return (
-              <div
-                key={config.id}
-                className={`${isWide ? 'lg:col-span-2' : ''} ${dragOver === config.id ? 'ring-2 ring-emerald-500/50 rounded-lg' : ''}`}
-                style={{ height: collapsed[config.id] ? 'auto' : isWide ? 360 : 280 }}
-                draggable={!locked}
-                onDragStart={() => handleDragStart(config.id)}
-                onDragOver={(e) => handleDragOver(e, config.id)}
-                onDrop={() => handleDrop(config.id)}
-                onDragEnd={handleDragEnd}
-              >
-                <ChartPanel
-                  config={config}
-                  data={chartData}
-                  isCollapsed={!!collapsed[config.id]}
-                  isLocked={locked}
-                  onToggleCollapse={() => toggleCollapse(config.id)}
-                  onMaximize={() => setMaximizedPanel(config.id)}
-                />
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* === Detail panels (alerts / processes / connections) === */}
-      <div className="mt-3 space-y-3">
-        <AgentAlertsPanel
-          alerts={alerts}
-          isOpen={alertsOpen}
-          onToggle={() => setAlertsOpen(o => !o)}
-          rangeLabel={range}
-        />
-        <ProcessesPanel
-          processes={processes}
-          isOpen={processesOpen}
-          onToggle={() => setProcessesOpen(o => !o)}
-        />
-        <ConnectionsPanel
-          connections={connections}
-          isOpen={connectionsOpen}
-          onToggle={() => setConnectionsOpen(o => !o)}
-        />
-        <DnsAnalyticsPanel
-          dns={dns}
-          isOpen={dnsOpen}
-          onToggle={() => setDnsOpen(o => !o)}
-        />
-      </div>
-
-      {/* === Maximized Panel Overlay === */}
+      {/* === Maximized Panel Overlay (from Charts tab) === */}
       {maximizedPanel && (
         <MaximizedOverlay
           config={PANEL_CONFIGS.find(c => c.id === maximizedPanel)!}
@@ -636,17 +770,63 @@ export default function HostDetailPage() {
           onClose={() => setMaximizedPanel(null)}
         />
       )}
-      </div>
+
+      {/* === Keyboard help overlay === */}
+      {helpOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-[#07111a]/80 backdrop-blur-sm"
+          onClick={() => setHelpOpen(false)}
+        >
+          <div className="nw-card rounded-[1.5rem] max-w-md w-[90vw] p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Keyboard shortcuts</h2>
+              <button onClick={() => setHelpOpen(false)} className="nw-muted hover:text-zinc-200 text-lg" title="Close (Esc)">×</button>
+            </div>
+            <dl className="text-sm space-y-2">
+              {TABS.map(t => (
+                <div key={t.id} className="flex justify-between">
+                  <dt className="nw-muted">{t.label}</dt>
+                  <dd><kbd className="px-1.5 py-0.5 rounded bg-white/8 border border-white/10 text-xs font-mono">{t.hotkey}</kbd></dd>
+                </div>
+              ))}
+              <hr className="border-white/6 my-2" />
+              <div className="flex justify-between"><dt className="nw-muted">Pause / resume live polling</dt><dd><kbd className="px-1.5 py-0.5 rounded bg-white/8 border border-white/10 text-xs font-mono">p</kbd></dd></div>
+              <div className="flex justify-between"><dt className="nw-muted">Cycle time range</dt><dd><kbd className="px-1.5 py-0.5 rounded bg-white/8 border border-white/10 text-xs font-mono">r</kbd></dd></div>
+              <div className="flex justify-between"><dt className="nw-muted">Dismiss overlay / maximized chart</dt><dd><kbd className="px-1.5 py-0.5 rounded bg-white/8 border border-white/10 text-xs font-mono">Esc</kbd></dd></div>
+              <div className="flex justify-between"><dt className="nw-muted">Toggle this help</dt><dd><kbd className="px-1.5 py-0.5 rounded bg-white/8 border border-white/10 text-xs font-mono">?</kbd></dd></div>
+            </dl>
+            <p className="mt-4 text-xs nw-subtle">
+              Shortcuts are suppressed while typing in inputs. Density toggle lives next to the Pause button in the header.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function AgentAlertsPanel({ alerts, isOpen, onToggle, rangeLabel }: {
+function AgentAlertsPanel({ alerts, rangeLabel }: {
   alerts: AgentAlert[]
-  isOpen: boolean
-  onToggle: () => void
   rangeLabel: string
+  isOpen?: boolean
+  onToggle?: () => void
 }) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+
+  const q = searchParams?.get('a_q') ?? ''
+  const sev = searchParams?.get('a_sev') ?? '' // '' | 'warning' | 'critical'
+  const cat = searchParams?.get('a_cat') ?? '' // '' | 'bandwidth' | 'port_scan' | 'beaconing' | 'dns_tunnel'
+
+  const setP = useCallback((key: string, value: string | null) => {
+    const params = new URLSearchParams(searchParams?.toString() ?? '')
+    const prefixed = `a_${key}`
+    if (value == null || value === '') params.delete(prefixed)
+    else params.set(prefixed, value)
+    const qs = params.toString()
+    router.replace(qs ? `?${qs}` : window.location.pathname, { scroll: false })
+  }, [router, searchParams])
+
   const severityStyles: Record<AgentAlert['severity'], string> = {
     warning: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
     critical: 'bg-red-500/15 text-red-400 border-red-500/30',
@@ -658,51 +838,92 @@ function AgentAlertsPanel({ alerts, isOpen, onToggle, rangeLabel }: {
     bandwidth: 'Bandwidth',
   }
 
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = { bandwidth: 0, port_scan: 0, beaconing: 0, dns_tunnel: 0 }
+    for (const a of alerts) counts[a.category] = (counts[a.category] ?? 0) + 1
+    return counts
+  }, [alerts])
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    return alerts.filter(a => {
+      if (sev && a.severity !== sev) return false
+      if (cat && a.category !== cat) return false
+      if (needle) {
+        const hay = `${a.message} ${a.detail} ${a.category} ${a.severity}`.toLowerCase()
+        if (!hay.includes(needle)) return false
+      }
+      return true
+    })
+  }, [alerts, q, sev, cat])
+
   return (
     <div className="nw-card rounded-[1.3rem] overflow-hidden">
-      <button
-        onClick={onToggle}
-        className="flex w-full items-center gap-2 px-3 py-2 border-b border-zinc-800/50"
-      >
-        {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-        <h3 className="text-sm font-medium text-zinc-300">Agent-Detected Alerts</h3>
-        {alerts.length > 0 && (
-          <span className="ml-2 rounded-full border border-yellow-500/30 bg-yellow-500/15 px-2 py-0.5 text-xs font-medium text-yellow-400">
-            {alerts.length}
+      <div className="border-b border-zinc-800/50 px-3 py-2 flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[200px] max-w-md">
+            <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 nw-subtle" />
+            <input
+              type="text"
+              value={q}
+              onChange={e => setP('q', e.target.value)}
+              placeholder="Search alerts..."
+              className="w-full bg-white/4 border border-white/10 rounded-md pl-7 pr-7 py-1.5 text-sm text-zinc-200 placeholder:nw-subtle focus:outline-none focus:border-[var(--nw-accent)]"
+            />
+            {q && (
+              <button onClick={() => setP('q', null)} className="absolute right-2 top-1/2 -translate-y-1/2 nw-subtle hover:text-zinc-200">
+                <XIcon size={14} />
+              </button>
+            )}
+          </div>
+          <span className="text-xs nw-subtle tabular-nums">
+            {filtered.length === alerts.length
+              ? `${alerts.length} alerts`
+              : `${filtered.length} of ${alerts.length}`}
           </span>
-        )}
-      </button>
-      {isOpen && (
-        <div className="p-3">
-          {alerts.length === 0 ? (
-            <p className="nw-muted text-sm">No alerts in the last {rangeLabel}.</p>
-          ) : (
-            <ul className="space-y-2">
-              {alerts.map(alert => (
-                <li
-                  key={alert.id}
-                  className="flex flex-col gap-1 rounded-lg border border-white/6 bg-white/3 p-3 sm:flex-row sm:items-center sm:gap-3"
-                >
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${severityStyles[alert.severity]}`}>
-                      {alert.severity}
-                    </span>
-                    <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5 text-xs font-medium text-zinc-300">
-                      {categoryLabels[alert.category]}
-                    </span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm text-zinc-200">{alert.message}</div>
-                    <div className="truncate text-xs nw-muted">{alert.detail}</div>
-                  </div>
-                  <div className="shrink-0 text-xs tabular-nums nw-subtle">
-                    {new Date(alert.time).toLocaleString()}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <FilterChip label="All severities" active={!sev} onClick={() => setP('sev', null)} />
+          <FilterChip label="Warning" active={sev === 'warning'} onClick={() => setP('sev', 'warning')} />
+          <FilterChip label="Critical" active={sev === 'critical'} onClick={() => setP('sev', 'critical')} />
+          <span className="mx-1 h-4 w-px bg-white/10" />
+          <FilterChip label="All categories" active={!cat} onClick={() => setP('cat', null)} />
+          <FilterChip label={`Bandwidth (${categoryCounts.bandwidth})`} active={cat === 'bandwidth'} onClick={() => setP('cat', 'bandwidth')} />
+          <FilterChip label={`Port Scan (${categoryCounts.port_scan})`} active={cat === 'port_scan'} onClick={() => setP('cat', 'port_scan')} />
+          <FilterChip label={`Beaconing (${categoryCounts.beaconing})`} active={cat === 'beaconing'} onClick={() => setP('cat', 'beaconing')} />
+          <FilterChip label={`DNS Tunnel (${categoryCounts.dns_tunnel})`} active={cat === 'dns_tunnel'} onClick={() => setP('cat', 'dns_tunnel')} />
+        </div>
+      </div>
+
+      {alerts.length === 0 ? (
+        <p className="nw-muted text-sm p-3">No alerts in the last {rangeLabel}.</p>
+      ) : filtered.length === 0 ? (
+        <p className="nw-muted text-sm p-3">No alerts match current filters.</p>
+      ) : (
+        <ul className="p-3 space-y-2 overflow-auto" style={{ maxHeight: 'calc(100vh - 260px)' }}>
+          {filtered.map(alert => (
+            <li
+              key={alert.id}
+              className="flex flex-col gap-1 rounded-lg border border-white/6 bg-white/3 p-3 sm:flex-row sm:items-center sm:gap-3"
+            >
+              <div className="flex shrink-0 items-center gap-2">
+                <span className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${severityStyles[alert.severity]}`}>
+                  {alert.severity}
+                </span>
+                <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5 text-xs font-medium text-zinc-300">
+                  {categoryLabels[alert.category]}
+                </span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm text-zinc-200">{alert.message}</div>
+                <div className="truncate text-xs nw-muted">{alert.detail}</div>
+              </div>
+              <div className="shrink-0 text-xs tabular-nums nw-subtle">
+                {new Date(alert.time).toLocaleString()}
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )
@@ -715,6 +936,28 @@ function InfoItem({ label, value }: { label: string; value: string }) {
     <div className="nw-card-soft rounded-[1rem] p-3">
       <div className="text-xs uppercase tracking-[0.16em] nw-subtle">{label}</div>
       <div className="text-sm font-medium truncate">{value}</div>
+    </div>
+  )
+}
+
+function OverviewSparkline({ title, data, dataKey, stroke, dataKey2, stroke2 }: {
+  title: string
+  data: Record<string, unknown>[]
+  dataKey: string
+  stroke: string
+  dataKey2?: string
+  stroke2?: string
+}) {
+  return (
+    <div className="nw-card rounded-[1.3rem] p-3 h-28">
+      <div className="text-xs uppercase tracking-wider nw-subtle mb-1">{title}</div>
+      <ResponsiveContainer width="100%" height="80%">
+        <LineChart data={data}>
+          <Line dataKey={dataKey} stroke={stroke} dot={false} connectNulls strokeWidth={1.5} />
+          {dataKey2 && <Line dataKey={dataKey2} stroke={stroke2} dot={false} connectNulls strokeWidth={1.5} />}
+          <Tooltip contentStyle={TOOLTIP_STYLE} />
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   )
 }
@@ -868,51 +1111,112 @@ function formatBps(bps: number): string {
   return `${bps.toFixed(0)} B/s`
 }
 
-function ProcessesPanel({ processes, isOpen, onToggle }: {
+type ProcSortKey = 'process' | 'conns' | 'rx' | 'tx' | 'total' | null
+
+function ProcessesPanel({ processes }: {
   processes: ProcessRow[]
-  isOpen: boolean
-  onToggle: () => void
+  isOpen?: boolean
+  onToggle?: () => void
 }) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+
+  const q = searchParams?.get('p_q') ?? ''
+  const sortRaw = searchParams?.get('p_sort') ?? '-total'
+  const sortDesc = sortRaw.startsWith('-')
+  const sortKey = (sortDesc ? sortRaw.slice(1) : sortRaw) as ProcSortKey
+
+  const setP = useCallback((key: string, value: string | null) => {
+    const params = new URLSearchParams(searchParams?.toString() ?? '')
+    const prefixed = `p_${key}`
+    if (value == null || value === '') params.delete(prefixed)
+    else params.set(prefixed, value)
+    const qs = params.toString()
+    router.replace(qs ? `?${qs}` : window.location.pathname, { scroll: false })
+  }, [router, searchParams])
+
+  const toggleSort = useCallback((key: Exclude<ProcSortKey, null>) => {
+    if (sortKey !== key) setP('sort', `-${key}`)
+    else if (sortDesc) setP('sort', key)
+    else setP('sort', `-${key}`)
+  }, [sortKey, sortDesc, setP])
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    let out = needle
+      ? processes.filter(p => p.process_name.toLowerCase().includes(needle))
+      : processes
+    if (sortKey) {
+      const cmp = (a: ProcessRow, b: ProcessRow) => {
+        switch (sortKey) {
+          case 'process': return a.process_name.localeCompare(b.process_name)
+          case 'conns':   return a.connection_count - b.connection_count
+          case 'rx':      return a.rx_rate_bps - b.rx_rate_bps
+          case 'tx':      return a.tx_rate_bps - b.tx_rate_bps
+          case 'total':   return (a.rx_rate_bps + a.tx_rate_bps) - (b.rx_rate_bps + b.tx_rate_bps)
+          default: return 0
+        }
+      }
+      out = [...out].sort((a, b) => sortDesc ? -cmp(a, b) : cmp(a, b))
+    }
+    return out
+  }, [processes, q, sortKey, sortDesc])
+
   return (
     <div className="nw-card rounded-[1.3rem] overflow-hidden">
-      <button
-        onClick={onToggle}
-        className="flex w-full items-center gap-2 px-3 py-2 border-b border-zinc-800/50"
-      >
-        {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-        <h3 className="text-sm font-medium text-zinc-300">Top Processes by Bandwidth</h3>
-        <span className="ml-2 text-xs nw-subtle">{processes.length}</span>
-      </button>
-      {isOpen && (
-        <div className="p-3">
-          {processes.length === 0 ? (
-            <p className="nw-muted text-sm">No process bandwidth data yet. Run the agent for a few seconds.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-xs uppercase tracking-wider nw-subtle">
-                  <tr className="border-b border-white/6">
-                    <th className="text-left py-2 px-2">Process</th>
-                    <th className="text-right py-2 px-2">PID</th>
-                    <th className="text-right py-2 px-2">Conns</th>
-                    <th className="text-right py-2 px-2">RX</th>
-                    <th className="text-right py-2 px-2">TX</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {processes.map((p, i) => (
-                    <tr key={`${p.process_name}-${p.pid ?? i}`} className="border-b border-white/6 last:border-b-0">
-                      <td className="py-2 px-2 text-zinc-200 truncate max-w-xs">{p.process_name}</td>
-                      <td className="py-2 px-2 text-right tabular-nums nw-muted">{p.pid ?? '—'}</td>
-                      <td className="py-2 px-2 text-right tabular-nums nw-muted">{p.connection_count}</td>
-                      <td className="py-2 px-2 text-right tabular-nums text-emerald-400">{formatBps(p.rx_rate_bps)}</td>
-                      <td className="py-2 px-2 text-right tabular-nums text-blue-400">{formatBps(p.tx_rate_bps)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+      <div className="border-b border-zinc-800/50 px-3 py-2 flex items-center gap-2">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 nw-subtle" />
+          <input
+            type="text"
+            value={q}
+            onChange={e => setP('q', e.target.value)}
+            placeholder="Filter process name..."
+            className="w-full bg-white/4 border border-white/10 rounded-md pl-7 pr-7 py-1.5 text-sm text-zinc-200 placeholder:nw-subtle focus:outline-none focus:border-[var(--nw-accent)]"
+          />
+          {q && (
+            <button onClick={() => setP('q', null)} className="absolute right-2 top-1/2 -translate-y-1/2 nw-subtle hover:text-zinc-200">
+              <XIcon size={14} />
+            </button>
           )}
+        </div>
+        <span className="text-xs nw-subtle tabular-nums">
+          {filtered.length === processes.length
+            ? `${processes.length} processes`
+            : `${filtered.length} of ${processes.length}`}
+        </span>
+      </div>
+
+      {processes.length === 0 ? (
+        <p className="nw-muted text-sm p-3">No process bandwidth data yet. Run the agent for a few seconds.</p>
+      ) : filtered.length === 0 ? (
+        <p className="nw-muted text-sm p-3">No processes match &ldquo;{q}&rdquo;.</p>
+      ) : (
+        <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 260px)' }}>
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase tracking-wider nw-subtle sticky top-0 bg-[#0c1824] z-10">
+              <tr className="border-b border-white/6">
+                <SortHeader label="Process" active={sortKey === 'process'} desc={sortDesc} onClick={() => toggleSort('process')} />
+                <th className="text-right py-2 px-2">PID</th>
+                <SortHeader label="Conns" align="right" active={sortKey === 'conns'} desc={sortDesc} onClick={() => toggleSort('conns')} />
+                <SortHeader label="RX" align="right" active={sortKey === 'rx'} desc={sortDesc} onClick={() => toggleSort('rx')} />
+                <SortHeader label="TX" align="right" active={sortKey === 'tx'} desc={sortDesc} onClick={() => toggleSort('tx')} />
+                <SortHeader label="Total" align="right" active={sortKey === 'total'} desc={sortDesc} onClick={() => toggleSort('total')} />
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((p, i) => (
+                <tr key={`${p.process_name}-${p.pid ?? i}`} className="border-b border-white/6 last:border-b-0 hover:bg-white/3">
+                  <td className="py-2 px-2 text-zinc-200 truncate max-w-xs">{p.process_name}</td>
+                  <td className="py-2 px-2 text-right tabular-nums nw-muted">{p.pid ?? '—'}</td>
+                  <td className="py-2 px-2 text-right tabular-nums nw-muted">{p.connection_count}</td>
+                  <td className="py-2 px-2 text-right tabular-nums text-emerald-400">{formatBps(p.rx_rate_bps)}</td>
+                  <td className="py-2 px-2 text-right tabular-nums text-blue-400">{formatBps(p.tx_rate_bps)}</td>
+                  <td className="py-2 px-2 text-right tabular-nums text-zinc-200">{formatBps(p.rx_rate_bps + p.tx_rate_bps)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -1016,11 +1320,71 @@ function DnsStat({ label, value, valueClass }: { label: string; value: string; v
   )
 }
 
-function ConnectionsPanel({ connections, isOpen, onToggle }: {
+type ConnSortKey = 'state' | 'process' | 'remote' | 'rtt' | null
+
+function ConnectionsPanel({ connections }: {
   connections: ConnectionRow[]
-  isOpen: boolean
-  onToggle: () => void
+  // Legacy props from earlier collapsible-panel usage; not used here.
+  isOpen?: boolean
+  onToggle?: () => void
 }) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+
+  const q = searchParams?.get('c_q') ?? ''
+  const proto = searchParams?.get('c_proto') ?? '' // '' | 'TCP' | 'UDP'
+  const state = searchParams?.get('c_state') ?? '' // '' | 'ESTABLISHED' | 'TIME_WAIT' | 'LISTEN' | 'OTHER'
+  const sortRaw = searchParams?.get('c_sort') ?? ''
+  const sortDesc = sortRaw.startsWith('-')
+  const sortKey = (sortDesc ? sortRaw.slice(1) : sortRaw) as ConnSortKey
+
+  const setP = useCallback((key: string, value: string | null) => {
+    const params = new URLSearchParams(searchParams?.toString() ?? '')
+    const prefixed = `c_${key}`
+    if (value == null || value === '') params.delete(prefixed)
+    else params.set(prefixed, value)
+    const qs = params.toString()
+    router.replace(qs ? `?${qs}` : window.location.pathname, { scroll: false })
+  }, [router, searchParams])
+
+  const toggleSort = useCallback((key: Exclude<ConnSortKey, null>) => {
+    if (sortKey !== key) setP('sort', key)
+    else if (!sortDesc) setP('sort', `-${key}`)
+    else setP('sort', null)
+  }, [sortKey, sortDesc, setP])
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    let out = connections.filter(c => {
+      if (proto && c.protocol.toUpperCase() !== proto) return false
+      if (state === 'OTHER') {
+        if (['ESTABLISHED', 'TIME_WAIT', 'LISTEN', 'CLOSE_WAIT'].includes(c.state)) return false
+      } else if (state && c.state !== state) return false
+      if (needle) {
+        const hay = `${c.process_name ?? ''} ${c.local_addr} ${c.remote_addr} ${c.state} ${c.protocol}`.toLowerCase()
+        if (!hay.includes(needle)) return false
+      }
+      return true
+    })
+    if (sortKey) {
+      const cmp = (a: ConnectionRow, b: ConnectionRow) => {
+        switch (sortKey) {
+          case 'state':   return (a.state || '').localeCompare(b.state || '')
+          case 'process': return (a.process_name || '').localeCompare(b.process_name || '')
+          case 'remote':  return a.remote_addr.localeCompare(b.remote_addr)
+          case 'rtt': {
+            const av = a.kernel_rtt_us ?? Infinity
+            const bv = b.kernel_rtt_us ?? Infinity
+            return av - bv
+          }
+          default: return 0
+        }
+      }
+      out = [...out].sort((a, b) => sortDesc ? -cmp(a, b) : cmp(a, b))
+    }
+    return out
+  }, [connections, q, proto, state, sortKey, sortDesc])
+
   const stateStyles: Record<string, string> = {
     ESTABLISHED: 'text-emerald-400',
     LISTEN: 'text-blue-400',
@@ -1028,55 +1392,122 @@ function ConnectionsPanel({ connections, isOpen, onToggle }: {
     CLOSE_WAIT: 'text-orange-400',
   }
 
+  const stateCounts = useMemo(() => {
+    const counts: Record<string, number> = { ESTABLISHED: 0, TIME_WAIT: 0, LISTEN: 0, CLOSE_WAIT: 0, OTHER: 0 }
+    for (const c of connections) {
+      if (c.state in counts) counts[c.state] += 1
+      else counts.OTHER += 1
+    }
+    return counts
+  }, [connections])
+
   return (
     <div className="nw-card rounded-[1.3rem] overflow-hidden">
-      <button
-        onClick={onToggle}
-        className="flex w-full items-center gap-2 px-3 py-2 border-b border-zinc-800/50"
-      >
-        {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-        <h3 className="text-sm font-medium text-zinc-300">Active Connections</h3>
-        <span className="ml-2 text-xs nw-subtle">{connections.length}</span>
-      </button>
-      {isOpen && (
-        <div className="p-3">
-          {connections.length === 0 ? (
-            <p className="nw-muted text-sm">No connection data yet.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-xs uppercase tracking-wider nw-subtle">
-                  <tr className="border-b border-white/6">
-                    <th className="text-left py-2 px-2">Proto</th>
-                    <th className="text-left py-2 px-2">State</th>
-                    <th className="text-left py-2 px-2">Process</th>
-                    <th className="text-left py-2 px-2">Local</th>
-                    <th className="text-left py-2 px-2">Remote</th>
-                    <th className="text-right py-2 px-2" title="Kernel-measured SRTT (Linux only)">RTT</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {connections.map((c, i) => (
-                    <tr key={`${c.local_addr}-${c.remote_addr}-${i}`} className="border-b border-white/6 last:border-b-0">
-                      <td className="py-2 px-2 tabular-nums nw-muted">{c.protocol}</td>
-                      <td className={`py-2 px-2 text-xs font-medium ${stateStyles[c.state] ?? 'nw-muted'}`}>{c.state || '—'}</td>
-                      <td className="py-2 px-2 text-zinc-200 truncate max-w-xs">
-                        {c.process_name ?? '—'}
-                        {c.pid != null && <span className="ml-1 text-xs nw-subtle">({c.pid})</span>}
-                      </td>
-                      <td className="py-2 px-2 tabular-nums nw-muted truncate max-w-xs">{c.local_addr}</td>
-                      <td className="py-2 px-2 tabular-nums nw-muted truncate max-w-xs">{c.remote_addr}</td>
-                      <td className="py-2 px-2 text-right tabular-nums nw-muted">
-                        {c.kernel_rtt_us != null ? `${(c.kernel_rtt_us / 1000).toFixed(1)} ms` : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      {/* Toolbar */}
+      <div className="border-b border-zinc-800/50 px-3 py-2 flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[200px] max-w-md">
+            <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 nw-subtle" />
+            <input
+              type="text"
+              value={q}
+              onChange={e => setP('q', e.target.value)}
+              placeholder="Search process, address, state..."
+              className="w-full bg-white/4 border border-white/10 rounded-md pl-7 pr-7 py-1.5 text-sm text-zinc-200 placeholder:nw-subtle focus:outline-none focus:border-[var(--nw-accent)]"
+            />
+            {q && (
+              <button onClick={() => setP('q', null)} className="absolute right-2 top-1/2 -translate-y-1/2 nw-subtle hover:text-zinc-200">
+                <XIcon size={14} />
+              </button>
+            )}
+          </div>
+          <span className="text-xs nw-subtle tabular-nums">
+            {filtered.length === connections.length
+              ? `${connections.length} connections`
+              : `${filtered.length} of ${connections.length}`}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <FilterChip label="All proto" active={!proto} onClick={() => setP('proto', null)} />
+          <FilterChip label="TCP" active={proto === 'TCP'} onClick={() => setP('proto', 'TCP')} />
+          <FilterChip label="UDP" active={proto === 'UDP'} onClick={() => setP('proto', 'UDP')} />
+          <span className="mx-1 h-4 w-px bg-white/10" />
+          <FilterChip label="All states" active={!state} onClick={() => setP('state', null)} />
+          <FilterChip label={`Estab (${stateCounts.ESTABLISHED})`} active={state === 'ESTABLISHED'} onClick={() => setP('state', 'ESTABLISHED')} />
+          <FilterChip label={`TIME_WAIT (${stateCounts.TIME_WAIT})`} active={state === 'TIME_WAIT'} onClick={() => setP('state', 'TIME_WAIT')} />
+          <FilterChip label={`LISTEN (${stateCounts.LISTEN})`} active={state === 'LISTEN'} onClick={() => setP('state', 'LISTEN')} />
+          <FilterChip label={`Other (${stateCounts.OTHER})`} active={state === 'OTHER'} onClick={() => setP('state', 'OTHER')} />
+        </div>
+      </div>
+
+      {/* Table */}
+      {connections.length === 0 ? (
+        <p className="nw-muted text-sm p-3">No connection data yet.</p>
+      ) : filtered.length === 0 ? (
+        <p className="nw-muted text-sm p-3">No matches for current filters.</p>
+      ) : (
+        <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 260px)' }}>
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase tracking-wider nw-subtle sticky top-0 bg-[#0c1824] z-10">
+              <tr className="border-b border-white/6">
+                <th className="text-left py-2 px-2">Proto</th>
+                <SortHeader label="State" active={sortKey === 'state'} desc={sortDesc} onClick={() => toggleSort('state')} />
+                <SortHeader label="Process" active={sortKey === 'process'} desc={sortDesc} onClick={() => toggleSort('process')} />
+                <th className="text-left py-2 px-2">Local</th>
+                <SortHeader label="Remote" active={sortKey === 'remote'} desc={sortDesc} onClick={() => toggleSort('remote')} />
+                <SortHeader label="RTT" align="right" active={sortKey === 'rtt'} desc={sortDesc} onClick={() => toggleSort('rtt')} title="Kernel-measured SRTT" />
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((c, i) => (
+                <tr key={`${c.local_addr}-${c.remote_addr}-${i}`} className="border-b border-white/6 last:border-b-0 hover:bg-white/3">
+                  <td className="py-2 px-2 tabular-nums nw-muted">{c.protocol}</td>
+                  <td className={`py-2 px-2 text-xs font-medium ${stateStyles[c.state] ?? 'nw-muted'}`}>{c.state || '—'}</td>
+                  <td className="py-2 px-2 text-zinc-200 truncate max-w-xs">
+                    {c.process_name ?? '—'}
+                    {c.pid != null && <span className="ml-1 text-xs nw-subtle">({c.pid})</span>}
+                  </td>
+                  <td className="py-2 px-2 tabular-nums nw-muted truncate max-w-xs">{c.local_addr}</td>
+                  <td className="py-2 px-2 tabular-nums nw-muted truncate max-w-xs">{c.remote_addr}</td>
+                  <td className="py-2 px-2 text-right tabular-nums nw-muted">
+                    {c.kernel_rtt_us != null ? `${(c.kernel_rtt_us / 1000).toFixed(1)} ms` : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
+  )
+}
+
+function FilterChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
+        active
+          ? 'bg-[rgba(61,214,198,0.15)] border-[rgba(61,214,198,0.35)] text-[var(--nw-text)]'
+          : 'bg-white/4 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'
+      }`}
+    >
+      {label}
+    </button>
+  )
+}
+
+function SortHeader({ label, active, desc, onClick, align, title }: {
+  label: string; active: boolean; desc: boolean; onClick: () => void; align?: 'left' | 'right'; title?: string
+}) {
+  const a = align ?? 'left'
+  return (
+    <th className={`py-2 px-2 ${a === 'right' ? 'text-right' : 'text-left'}`} title={title}>
+      <button onClick={onClick} className={`inline-flex items-center gap-1 uppercase tracking-wider ${active ? 'text-[var(--nw-text)]' : 'nw-subtle hover:text-zinc-300'}`}>
+        {label}
+        {!active && <ArrowUpDown size={10} className="opacity-50" />}
+        {active && (desc ? <ArrowDown size={10} /> : <ArrowUp size={10} />)}
+      </button>
+    </th>
   )
 }

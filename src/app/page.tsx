@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
-import { getHosts, getMetrics, Host, MetricPoint } from '@/lib/api'
+import { getHosts, getMetrics, getAlertHistory, Host, MetricPoint } from '@/lib/api'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import {
   Activity, Radar, Bell, BarChart3, Monitor, RefreshCw,
@@ -594,6 +594,192 @@ function timeAgo(iso: string): string {
   return `${Math.floor(secs / 86400)}d ago`
 }
 
+function DenseHostTable({ hosts, hostMetrics, firingPerHost }: {
+  hosts: Host[]
+  hostMetrics: Record<string, HostMetrics>
+  firingPerHost: Record<string, number>
+}) {
+  const col = (value: number | null, warn: number, crit: number) => {
+    if (value == null) return 'nw-muted'
+    if (value > crit) return 'text-red-400'
+    if (value > warn) return 'text-yellow-400'
+    return 'text-zinc-200'
+  }
+  const Bar = ({ value, warn, crit }: { value: number | null; warn: number; crit: number }) => {
+    if (value == null) return <div className="w-12 h-1.5 bg-white/5 rounded" />
+    const pct = Math.min(100, Math.max(0, value))
+    const color = value > crit ? 'bg-red-400/70' : value > warn ? 'bg-yellow-400/70' : 'bg-emerald-400/60'
+    return (
+      <div className="w-12 h-1.5 bg-white/5 rounded overflow-hidden">
+        <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+    )
+  }
+  return (
+    <div className="nw-card rounded-[1rem] overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-[10px] uppercase tracking-wider nw-subtle">
+            <tr className="border-b border-white/6">
+              <th className="text-left py-1.5 px-2"></th>
+              <th className="text-left py-1.5 px-2">Host</th>
+              <th className="text-left py-1.5 px-2 hidden md:table-cell">OS</th>
+              <th className="text-right py-1.5 px-2">CPU</th>
+              <th className="text-right py-1.5 px-2">MEM</th>
+              <th className="text-right py-1.5 px-2">LOAD</th>
+              <th className="text-right py-1.5 px-2">DISK</th>
+              <th className="text-right py-1.5 px-2 hidden lg:table-cell">NET RX/TX</th>
+              <th className="text-right py-1.5 px-2">RTT</th>
+              <th className="text-right py-1.5 px-2">⚠</th>
+              <th className="py-1.5 px-2 hidden xl:table-cell">Trend</th>
+              <th className="py-1.5 px-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {hosts.map(host => {
+              const m = hostMetrics[host.id] || {} as HostMetrics
+              const firing = firingPerHost[host.id] ?? 0
+              const netRx = m.cpuHistory && m.cpuHistory.length > 0
+                ? undefined // rx not in HostMetrics today — leave dash
+                : undefined
+              void netRx
+              return (
+                <tr key={host.id} className="border-b border-white/6 last:border-b-0 hover:bg-white/3 transition-colors">
+                  <td className="py-1 px-2">
+                    <span className={`w-2 h-2 rounded-full inline-block ${host.is_online ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                  </td>
+                  <td className="py-1 px-2 font-medium text-zinc-200 truncate max-w-[200px]">
+                    <Link href={`/hosts/${host.id}`} className="hover:text-[var(--nw-accent)]">{host.hostname}</Link>
+                  </td>
+                  <td className="py-1 px-2 text-xs nw-muted truncate max-w-[140px] hidden md:table-cell">{host.os ?? '—'}</td>
+                  <td className="py-1 px-2 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Bar value={m.cpu ?? null} warn={80} crit={95} />
+                      <span className={`tabular-nums w-9 text-right ${col(m.cpu ?? null, 80, 95)}`}>{m.cpu != null ? `${m.cpu.toFixed(0)}%` : '—'}</span>
+                    </div>
+                  </td>
+                  <td className="py-1 px-2 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Bar value={m.memPct ?? null} warn={85} crit={95} />
+                      <span className={`tabular-nums w-9 text-right ${col(m.memPct ?? null, 85, 95)}`}>{m.memPct != null ? `${m.memPct.toFixed(0)}%` : '—'}</span>
+                    </div>
+                  </td>
+                  <td className={`py-1 px-2 text-right tabular-nums ${col(m.load1m ?? null, host.cpu_cores ?? 99, (host.cpu_cores ?? 99) * 2)}`}>
+                    {m.load1m != null ? m.load1m.toFixed(2) : '—'}
+                  </td>
+                  <td className="py-1 px-2 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Bar value={m.disk ?? null} warn={85} crit={95} />
+                      <span className={`tabular-nums w-9 text-right ${col(m.disk ?? null, 85, 95)}`}>{m.disk != null ? `${m.disk.toFixed(0)}%` : '—'}</span>
+                    </div>
+                  </td>
+                  <td className="py-1 px-2 text-right text-xs tabular-nums nw-muted hidden lg:table-cell">—</td>
+                  <td className={`py-1 px-2 text-right tabular-nums ${col(m.latency ?? null, 100, 250)}`}>
+                    {m.latency != null ? `${m.latency.toFixed(0)}ms` : '—'}
+                  </td>
+                  <td className="py-1 px-2 text-right">
+                    {firing > 0 ? (
+                      <span className="inline-block rounded-full bg-red-500/20 text-red-400 px-1.5 text-xs font-semibold tabular-nums">{firing}</span>
+                    ) : <span className="nw-subtle">—</span>}
+                  </td>
+                  <td className="py-1 px-2 hidden xl:table-cell">
+                    {m.cpuHistory && m.cpuHistory.length > 1
+                      ? <MiniSparkline data={m.cpuHistory} color="#fbbf24" height={14} />
+                      : <span className="nw-subtle text-xs">—</span>}
+                  </td>
+                  <td className="py-1 px-2 text-right">
+                    <Link href={`/hosts/${host.id}`} className="nw-muted hover:text-zinc-200">
+                      <ChevronRight size={14} />
+                    </Link>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function formatRateKBps(kbps: number): string {
+  if (kbps >= 1024 * 1024) return `${(kbps / 1024 / 1024).toFixed(1)} GB/s`
+  if (kbps >= 1024) return `${(kbps / 1024).toFixed(1)} MB/s`
+  return `${kbps.toFixed(0)} KB/s`
+}
+
+function FleetSpark({ title, data, series, footer }: {
+  title: string
+  data: Array<Record<string, unknown>>
+  series: Array<{ key: string; stroke: string; label: string; format: (v: number) => string }>
+  footer: string
+}) {
+  const latest = data[data.length - 1]
+  return (
+    <div className="nw-card rounded-[1rem] px-3 py-2">
+      <div className="flex items-baseline justify-between gap-3 mb-1">
+        <span className="text-xs uppercase tracking-wider nw-subtle">{title}</span>
+        <span className="text-xs nw-subtle tabular-nums">{footer}</span>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-0.5 text-xs tabular-nums shrink-0 min-w-[90px]">
+          {series.map(s => {
+            const v = latest?.[s.key] as number | undefined
+            return (
+              <div key={s.key} className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full" style={{ background: s.stroke }} />
+                <span className="nw-muted truncate">{s.label}</span>
+                <span style={{ color: s.stroke }}>{v != null ? s.format(v) : '—'}</span>
+              </div>
+            )
+          })}
+        </div>
+        <div className="flex-1 h-12">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data}>
+              {series.map(s => (
+                <Line key={s.key} dataKey={s.key} stroke={s.stroke} dot={false} connectNulls strokeWidth={1.5} isAnimationActive={false} />
+              ))}
+              <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', fontSize: 11 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PulseCount({ value, label, tone = 'neutral' }: {
+  value: number; label: string; tone?: 'good' | 'bad' | 'warn' | 'muted' | 'neutral'
+}) {
+  const color = tone === 'good' ? 'text-emerald-400'
+    : tone === 'bad' ? 'text-red-400'
+    : tone === 'warn' ? 'text-yellow-400'
+    : tone === 'muted' ? 'text-zinc-300'
+    : 'text-zinc-200'
+  return (
+    <span className="flex items-baseline gap-1">
+      <span className={`text-base font-semibold tabular-nums ${color}`}>{value}</span>
+      <span className="text-xs uppercase tracking-wider nw-subtle">{label}</span>
+    </span>
+  )
+}
+
+function PulsePeak({ label, value, host, threshold }: {
+  label: string; value: string; host: Host; threshold: 'ok' | 'warn' | 'crit'
+}) {
+  const valueColor = threshold === 'crit' ? 'text-red-400'
+    : threshold === 'warn' ? 'text-yellow-400'
+    : 'text-zinc-200'
+  return (
+    <Link href={`/hosts/${host.id}`} className="flex items-baseline gap-1 hover:brightness-125" title={`Peak ${label} on ${host.hostname}`}>
+      <span className="text-[10px] uppercase tracking-wider nw-subtle">{label}</span>
+      <span className={`text-sm font-semibold tabular-nums ${valueColor}`}>{value}</span>
+      <span className="text-xs nw-muted truncate max-w-[120px]">{host.hostname}</span>
+    </Link>
+  )
+}
+
 function MiniSparkline({ data, color, height = 24 }: { data: number[]; color: string; height?: number }) {
   if (data.length < 2) return null
   const max = Math.max(...data, 1)
@@ -637,12 +823,69 @@ function metricColor(value: number | null, warn: number, crit: number): string {
   return 'text-emerald-400'
 }
 
+type HostSortKey = 'hostname' | 'last_seen' | 'cpu' | 'mem' | 'load'
+type HostStatusFilter = 'all' | 'online' | 'offline' | 'warning'
+
 export default function HostsPage() {
   const { token, isLoading: authLoading } = useAuth()
   const [hosts, setHosts] = useState<Host[]>([])
   const [hostMetrics, setHostMetrics] = useState<Record<string, HostMetrics>>({})
   const [hostPoints, setHostPoints] = useState<Record<string, MetricPoint[]>>({})
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<HostStatusFilter>('all')
+  const [sortKey, setSortKey] = useState<HostSortKey>('hostname')
+  const [sortDesc, setSortDesc] = useState(false)
+  const [firingAlerts, setFiringAlerts] = useState(0)
+  const [firingPerHost, setFiringPerHost] = useState<Record<string, number>>({})
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
+    if (typeof window === 'undefined') return 'list'
+    return (localStorage.getItem('nw-fleet-view') as 'list' | 'grid') ?? 'list'
+  })
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  // Fleet hotkeys: / focus search, g toggle list/grid
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === '/') {
+        e.preventDefault()
+        searchRef.current?.focus()
+        searchRef.current?.select()
+      } else if (e.key === 'g') {
+        e.preventDefault()
+        setViewMode(v => v === 'list' ? 'grid' : 'list')
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    localStorage.setItem('nw-fleet-view', viewMode)
+  }, [viewMode])
+
+  // Firing alerts counts (fleet total + per-host), polled alongside fleet data.
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const events = await getAlertHistory()
+        if (cancelled) return
+        const firing = events.filter(e => e.state === 'firing')
+        setFiringAlerts(firing.length)
+        const per: Record<string, number> = {}
+        for (const e of firing) per[e.host_id] = (per[e.host_id] ?? 0) + 1
+        setFiringPerHost(per)
+      } catch { /* silent */ }
+    }
+    void load()
+    const id = setInterval(load, 30_000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [token])
 
   const fetchAll = useCallback(async () => {
     try {
@@ -678,6 +921,36 @@ export default function HostsPage() {
     return () => clearInterval(interval)
   }, [token, authLoading, fetchAll])
 
+  // Aggregate time-series across hosts. Key by minute bucket so snapshots
+  // from different hosts line up. MUST be declared before any early return
+  // so React sees the same hook order every render.
+  const fleetSeries = useMemo(() => {
+    type Bucket = { rx: number; tx: number; cpuSum: number; cpuN: number; load: number }
+    const buckets = new Map<string, Bucket>()
+    for (const points of Object.values(hostPoints)) {
+      for (const p of points) {
+        const t = new Date(p.time)
+        t.setSeconds(0, 0)
+        const key = t.toISOString()
+        const b = buckets.get(key) ?? { rx: 0, tx: 0, cpuSum: 0, cpuN: 0, load: 0 }
+        if (p.net_rx_rate_bps != null) b.rx += p.net_rx_rate_bps
+        if (p.net_tx_rate_bps != null) b.tx += p.net_tx_rate_bps
+        if (p.cpu_usage_pct != null) { b.cpuSum += p.cpu_usage_pct; b.cpuN += 1 }
+        if (p.load_avg_1m != null && p.load_avg_1m > b.load) b.load = p.load_avg_1m
+        buckets.set(key, b)
+      }
+    }
+    return Array.from(buckets.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, b]) => ({
+        time: new Date(key).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        rx: b.rx / 1024,                              // KB/s
+        tx: b.tx / 1024,                              // KB/s
+        cpu: b.cpuN > 0 ? b.cpuSum / b.cpuN : null,   // avg % across fleet
+        load: b.load,                                 // peak load in bucket
+      }))
+  }, [hostPoints])
+
   if (authLoading) return null
 
   if (!token) {
@@ -707,60 +980,244 @@ export default function HostsPage() {
   const maxDisk = Math.max(...allMetrics.map(m => m.disk ?? 0), 0)
   const hasWarnings = allMetrics.some(m => (m.cpu ?? 0) > 80 || (m.memPct ?? 0) > 85 || (m.disk ?? 0) > 90)
 
+  // Threshold helpers used by both the pulse strip and the host filter. Must
+  // be declared before the warnCount/filteredHosts computations below.
+  const warned = (m: HostMetrics | undefined) =>
+    (m?.cpu ?? 0) > 80 || (m?.memPct ?? 0) > 85 || (m?.disk ?? 0) > 90
+
+  // Peak per-metric host (name + value) — these are the names that end up in
+  // the pulse strip as "peak CPU 92% on gw-01".
+  type Peak = { host: Host; value: number } | null
+  const pickPeak = (getter: (m: HostMetrics) => number | null): Peak => {
+    let best: Peak = null
+    for (const h of hosts) {
+      const v = getter(hostMetrics[h.id] || {} as HostMetrics)
+      if (v == null) continue
+      if (best == null || v > best.value) best = { host: h, value: v }
+    }
+    return best
+  }
+  const peakCpu = pickPeak(m => m.cpu)
+  const peakMem = pickPeak(m => m.memPct)
+  const peakLoad = pickPeak(m => m.load1m)
+  const peakDisk = pickPeak(m => m.disk)
+  const peakRtt = pickPeak(m => m.latency)
+
+  const isCritical = (m: HostMetrics | undefined) =>
+    (m?.cpu ?? 0) > 95 || (m?.memPct ?? 0) > 95 || (m?.disk ?? 0) > 95
+  const critCount = hosts.filter(h => isCritical(hostMetrics[h.id])).length
+  const warnCount = hosts.filter(h => {
+    const m = hostMetrics[h.id]
+    return !isCritical(m) && warned(m)
+  }).length
+
+  const fleetPeakRx = Math.max(0, ...fleetSeries.map(p => p.rx))
+  const fleetPeakTx = Math.max(0, ...fleetSeries.map(p => p.tx))
+
+  // Top offenders: hosts that have crossed a warn threshold, sorted by
+  // severity. Each offender carries its worst metric for display.
+  type Offender = { host: Host; metric: string; value: string; severity: 'crit' | 'warn' | 'info'; score: number }
+  const offenders: Offender[] = []
+  for (const h of hosts) {
+    if (!h.is_online) {
+      offenders.push({ host: h, metric: 'OFFLINE', value: '', severity: 'crit', score: 1000 })
+      continue
+    }
+    const m = hostMetrics[h.id]
+    if (!m) continue
+    const push = (metric: string, value: string, severity: 'crit' | 'warn' | 'info', score: number) =>
+      offenders.push({ host: h, metric, value, severity, score })
+    if ((m.cpu ?? 0) > 95) push('CPU', `${m.cpu!.toFixed(0)}%`, 'crit', 950 + m.cpu!)
+    else if ((m.cpu ?? 0) > 80) push('CPU', `${m.cpu!.toFixed(0)}%`, 'warn', 800 + m.cpu!)
+    if ((m.memPct ?? 0) > 95) push('MEM', `${m.memPct!.toFixed(0)}%`, 'crit', 950 + m.memPct!)
+    else if ((m.memPct ?? 0) > 85) push('MEM', `${m.memPct!.toFixed(0)}%`, 'warn', 850 + m.memPct!)
+    if ((m.disk ?? 0) > 95) push('DISK', `${m.disk!.toFixed(0)}%`, 'crit', 950 + m.disk!)
+    else if ((m.disk ?? 0) > 90) push('DISK', `${m.disk!.toFixed(0)}%`, 'warn', 850 + m.disk!)
+    if (h.cpu_cores && (m.load1m ?? 0) > h.cpu_cores * 2) push('LOAD', m.load1m!.toFixed(2), 'warn', 800 + m.load1m!)
+    if ((m.latency ?? 0) > 200) push('RTT', `${m.latency!.toFixed(0)}ms`, 'warn', 500 + (m.latency ?? 0))
+    if ((m.loss ?? 0) > 5) push('LOSS', `${m.loss!.toFixed(0)}%`, 'warn', 600 + m.loss!)
+  }
+  offenders.sort((a, b) => b.score - a.score)
+  const topOffenders = offenders.slice(0, 5)
+
+  const qFilter = search.trim().toLowerCase()
+
+  const filteredHosts = hosts.filter(h => {
+    if (statusFilter === 'online' && !h.is_online) return false
+    if (statusFilter === 'offline' && h.is_online) return false
+    if (statusFilter === 'warning' && !warned(hostMetrics[h.id])) return false
+    if (qFilter) {
+      const hay = `${h.hostname} ${h.os ?? ''} ${h.kernel ?? ''}`.toLowerCase()
+      if (!hay.includes(qFilter)) return false
+    }
+    return true
+  }).sort((a, b) => {
+    const ma = hostMetrics[a.id]
+    const mb = hostMetrics[b.id]
+    const desc = sortDesc ? -1 : 1
+    switch (sortKey) {
+      case 'hostname': return desc * a.hostname.localeCompare(b.hostname)
+      case 'last_seen': return desc * (new Date(a.last_seen_at).getTime() - new Date(b.last_seen_at).getTime())
+      case 'cpu': return desc * ((ma?.cpu ?? -1) - (mb?.cpu ?? -1))
+      case 'mem': return desc * ((ma?.memPct ?? -1) - (mb?.memPct ?? -1))
+      case 'load': return desc * ((ma?.load1m ?? -1) - (mb?.load1m ?? -1))
+      default: return 0
+    }
+  })
+
   return (
-    <div className="space-y-6">
-      {/* Fleet Health Summary */}
-      <section className="nw-card rounded-[1.75rem] p-6 sm:p-8">
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <span className="nw-kicker">Live control surface</span>
-            <h1 className="mt-4 text-4xl font-semibold tracking-[-0.05em]">Fleet overview</h1>
-            <p className="mt-3 max-w-2xl text-base leading-7 nw-muted">Monitor host health, spot drift, and jump into detail before a noisy issue becomes a real outage.</p>
-            <p className="mt-3 text-sm nw-subtle">{hosts.length} {hosts.length === 1 ? 'host' : 'hosts'} monitored</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-200">
-              <span className="h-2 w-2 rounded-full bg-emerald-300" /> {online} online
-            </span>
-            {offline > 0 && (
-              <span className="flex items-center gap-1.5 rounded-full border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-red-200">
-                <span className="h-2 w-2 rounded-full bg-red-300" /> {offline} offline
-              </span>
-            )}
-            {hasWarnings && (
-              <span className="flex items-center gap-1.5 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-amber-100">
-                ⚠ warnings present
-              </span>
-            )}
-          </div>
-        </div>
+    <div className="space-y-3">
+      {/* Fleet pulse strip — single compact bar replaces the narrative hero. */}
+      <section className="nw-card rounded-[1rem] px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+        <PulseCount value={hosts.length} label="hosts" />
+        <PulseCount value={online} label="online" tone={online === hosts.length ? 'good' : 'muted'} />
+        {offline > 0 && <PulseCount value={offline} label="offline" tone="bad" />}
+        {warnCount > 0 && <PulseCount value={warnCount} label="warn" tone="warn" />}
+        {critCount > 0 && <PulseCount value={critCount} label="crit" tone="bad" />}
+        {firingAlerts > 0 && (
+          <Link href="/alerts" className="flex items-baseline gap-1 text-red-400 hover:brightness-125">
+            <span className="text-base font-semibold tabular-nums">{firingAlerts}</span>
+            <span className="text-xs uppercase tracking-wider nw-subtle">firing</span>
+          </Link>
+        )}
+        <span className="h-4 w-px bg-white/10 hidden sm:inline" />
+        {peakCpu && <PulsePeak label="CPU" value={`${peakCpu.value.toFixed(0)}%`} host={peakCpu.host} threshold={peakCpu.value > 95 ? 'crit' : peakCpu.value > 80 ? 'warn' : 'ok'} />}
+        {peakMem && <PulsePeak label="MEM" value={`${peakMem.value.toFixed(0)}%`} host={peakMem.host} threshold={peakMem.value > 95 ? 'crit' : peakMem.value > 85 ? 'warn' : 'ok'} />}
+        {peakLoad && <PulsePeak label="LOAD" value={peakLoad.value.toFixed(2)} host={peakLoad.host} threshold={peakLoad.value > (peakLoad.host.cpu_cores ?? 99) * 2 ? 'warn' : 'ok'} />}
+        {peakDisk && <PulsePeak label="DISK" value={`${peakDisk.value.toFixed(0)}%`} host={peakDisk.host} threshold={peakDisk.value > 95 ? 'crit' : peakDisk.value > 90 ? 'warn' : 'ok'} />}
+        {peakRtt && <PulsePeak label="RTT" value={`${peakRtt.value.toFixed(0)}ms`} host={peakRtt.host} threshold={peakRtt.value > 200 ? 'warn' : 'ok'} />}
       </section>
 
-      {/* Fleet Stats */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <div className="nw-stat-card">
-          <div className="text-xs uppercase tracking-[0.18em] nw-subtle">Avg CPU</div>
-          <div className={`text-lg font-semibold tabular-nums ${metricColor(avgCpu, 80, 95)}`}>{avgCpu.toFixed(1)}%</div>
+      {/* Fleet sparkline strip — two compact panels, no axes, one-line labels */}
+      {fleetSeries.length > 1 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <FleetSpark title="Fleet network rate" data={fleetSeries}
+            series={[
+              { key: 'rx', stroke: '#34d399', label: 'RX', format: formatRateKBps },
+              { key: 'tx', stroke: '#60a5fa', label: 'TX', format: formatRateKBps },
+            ]}
+            footer={`peak ${formatRateKBps(Math.max(fleetPeakRx, fleetPeakTx))}`}
+          />
+          <FleetSpark title="Fleet CPU / load" data={fleetSeries}
+            series={[
+              { key: 'cpu', stroke: '#fbbf24', label: 'CPU avg %', format: v => v != null ? `${v.toFixed(0)}%` : '—' },
+              { key: 'load', stroke: '#f472b6', label: 'peak load', format: v => v != null ? v.toFixed(2) : '—' },
+            ]}
+            footer={`avg CPU ${avgCpu.toFixed(0)}% · peak load ${Math.max(0, ...fleetSeries.map(p => p.load ?? 0)).toFixed(2)}`}
+          />
         </div>
-        <div className="nw-stat-card">
-          <div className="text-xs uppercase tracking-[0.18em] nw-subtle">Avg memory</div>
-          <div className={`text-lg font-semibold tabular-nums ${metricColor(avgMem, 85, 95)}`}>{avgMem.toFixed(1)}%</div>
-        </div>
-        <div className="nw-stat-card">
-          <div className="text-xs uppercase tracking-[0.18em] nw-subtle">Max disk</div>
-          <div className={`text-lg font-semibold tabular-nums ${metricColor(maxDisk, 80, 90)}`}>{maxDisk.toFixed(1)}%</div>
-        </div>
-        <div className="nw-stat-card">
-          <div className="text-xs uppercase tracking-[0.18em] nw-subtle">Fleet health</div>
-          <div className={`text-lg font-semibold ${offline > 0 ? 'text-red-400' : hasWarnings ? 'text-yellow-400' : 'text-emerald-400'}`}>
-            {offline > 0 ? 'Degraded' : hasWarnings ? 'Warning' : 'Healthy'}
+      )}
+
+      {/* Top offenders — only rendered when something is actually wrong */}
+      {topOffenders.length > 0 && (
+        <div className="nw-card rounded-[1rem] overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/6">
+            <span className="text-xs uppercase tracking-wider nw-subtle">Top offenders</span>
+            <span className="text-xs nw-muted">— hosts above thresholds, worst first</span>
           </div>
+          <ul>
+            {topOffenders.map((o, i) => {
+              const m = hostMetrics[o.host.id]
+              const sevColor = o.severity === 'crit' ? 'text-red-400'
+                : o.severity === 'warn' ? 'text-yellow-400'
+                : 'text-sky-300'
+              return (
+                <li key={`${o.host.id}-${o.metric}-${i}`} className="flex items-center gap-3 px-3 py-1.5 border-b border-white/6 last:border-b-0 hover:bg-white/3">
+                  <span className={`w-2 h-2 rounded-full ${o.host.is_online ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                  <Link href={`/hosts/${o.host.id}`} className="font-medium text-zinc-200 hover:text-[var(--nw-accent)] truncate flex-1 min-w-0">
+                    {o.host.hostname}
+                  </Link>
+                  <span className={`text-xs uppercase tracking-wider tabular-nums font-semibold ${sevColor} w-14 text-right`}>{o.metric}</span>
+                  <span className={`text-sm tabular-nums ${sevColor} w-16 text-right`}>{o.value}</span>
+                  {m?.cpuHistory && m.cpuHistory.length > 1 && (
+                    <div className="w-20 shrink-0"><MiniSparkline data={m.cpuHistory} color="#fbbf24" /></div>
+                  )}
+                  <ChevronRight size={14} className="text-zinc-600 shrink-0" />
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* Host-list toolbar */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative flex-1 max-w-md">
+          <input
+            ref={searchRef}
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search hostname or OS   (press /)"
+            className="w-full bg-white/4 border border-white/10 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder:nw-subtle focus:outline-none focus:border-[var(--nw-accent)]"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-xs nw-subtle hover:text-zinc-200">×</button>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(['all', 'online', 'offline', 'warning'] as HostStatusFilter[]).map(s => {
+            const count = s === 'all' ? hosts.length
+              : s === 'online' ? online
+              : s === 'offline' ? offline
+              : hosts.filter(h => warned(hostMetrics[h.id])).length
+            return (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`rounded-full border px-2.5 py-1 text-xs capitalize transition-colors ${
+                  statusFilter === s
+                    ? 'bg-[rgba(61,214,198,0.15)] border-[rgba(61,214,198,0.35)] text-[var(--nw-text)]'
+                    : 'bg-white/4 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'
+                }`}
+              >
+                {s} ({count})
+              </button>
+            )
+          })}
+          <span className="mx-1 h-4 w-px bg-white/10" />
+          <select
+            value={sortKey}
+            onChange={e => setSortKey(e.target.value as HostSortKey)}
+            className="bg-white/4 border border-white/10 rounded-md px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+            title="Sort by"
+          >
+            <option value="hostname">Name</option>
+            <option value="last_seen">Last seen</option>
+            <option value="cpu">CPU</option>
+            <option value="mem">Memory</option>
+            <option value="load">Load</option>
+          </select>
+          <button
+            onClick={() => setSortDesc(d => !d)}
+            title={sortDesc ? 'Descending' : 'Ascending'}
+            className="bg-white/4 border border-white/10 rounded-md px-2 py-1 text-xs text-zinc-300 hover:text-zinc-100"
+          >
+            {sortDesc ? '↓' : '↑'}
+          </button>
+          <span className="mx-1 h-4 w-px bg-white/10" />
+          <button
+            onClick={() => setViewMode(v => v === 'list' ? 'grid' : 'list')}
+            title={viewMode === 'list' ? 'Switch to card grid' : 'Switch to dense list'}
+            className="bg-white/4 border border-white/10 rounded-md px-2 py-1 text-xs text-zinc-300 hover:text-zinc-100"
+          >
+            {viewMode === 'list' ? '⊞ grid' : '≣ list'}
+          </button>
         </div>
       </div>
 
-      {/* Host Cards */}
+      {/* Host list — dense table (default) or card grid */}
+      {filteredHosts.length === 0 ? (
+        <p className="nw-muted">No hosts match the current filters.</p>
+      ) : viewMode === 'list' ? (
+        <DenseHostTable
+          hosts={filteredHosts}
+          hostMetrics={hostMetrics}
+          firingPerHost={firingPerHost}
+        />
+      ) : (
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {hosts.map(host => {
+        {filteredHosts.map(host => {
           const m = hostMetrics[host.id] || { cpu: null, memPct: null, disk: null, load1m: null, latency: null, loss: null, connections: null, cpuHistory: [] }
           return (
             <Link
@@ -822,10 +1279,21 @@ export default function HostsPage() {
           )
         })}
       </div>
+      )}
 
-      {/* Fleet Overlay Charts */}
+      {/* Fleet Overlay Charts — collapsed by default now that fleet sparklines
+          at the top show the aggregate trends. Expand for per-host deep-dive. */}
       {hosts.length > 0 && Object.keys(hostPoints).length > 0 && (
-        <FleetCharts hosts={hosts} hostPoints={hostPoints} />
+        <details className="nw-card rounded-[1rem] overflow-hidden group">
+          <summary className="cursor-pointer list-none flex items-center gap-2 px-3 py-2 hover:bg-white/3">
+            <ChevronRight size={14} className="nw-subtle transition-transform group-open:rotate-90" />
+            <span className="text-xs uppercase tracking-wider nw-subtle">Historical charts</span>
+            <span className="text-xs nw-muted">— per-host overlays, drag-reorder, maximize</span>
+          </summary>
+          <div className="border-t border-white/6">
+            <FleetCharts hosts={hosts} hostPoints={hostPoints} />
+          </div>
+        </details>
       )}
     </div>
   )

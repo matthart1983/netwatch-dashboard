@@ -33,6 +33,8 @@ export default function AlertsPage() {
   const [tab, setTab] = useState<'rules' | 'history'>('rules')
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [stateFilter, setStateFilter] = useState<'all' | 'firing' | 'resolved'>('all')
 
   const [formName, setFormName] = useState('')
   const [formMetric, setFormMetric] = useState('gateway_loss_pct')
@@ -239,17 +241,45 @@ export default function AlertsPage() {
         </div>
       )}
 
-      {tab === 'history' && (
-        <div className="grid gap-3">
-          {events.length === 0 ? (
+      {tab === 'history' && (() => {
+        const q = search.trim().toLowerCase()
+        const filteredEvents = events.filter(e => {
+          if (stateFilter !== 'all' && e.state !== stateFilter) return false
+          if (q && !e.message.toLowerCase().includes(q)) return false
+          return true
+        })
+        const firingCount = events.filter(e => e.state === 'firing').length
+        return (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search messages..."
+              className="flex-1 min-w-[200px] max-w-md bg-white/4 border border-white/10 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder:nw-subtle focus:outline-none focus:border-[var(--nw-accent)]"
+            />
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => setStateFilter('all')} className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${stateFilter === 'all' ? 'bg-[rgba(61,214,198,0.15)] border-[rgba(61,214,198,0.35)] text-[var(--nw-text)]' : 'bg-white/4 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'}`}>All ({events.length})</button>
+              <button onClick={() => setStateFilter('firing')} className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${stateFilter === 'firing' ? 'bg-red-500/20 border-red-500/30 text-red-200' : 'bg-white/4 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'}`}>Firing ({firingCount})</button>
+              <button onClick={() => setStateFilter('resolved')} className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${stateFilter === 'resolved' ? 'bg-[rgba(61,214,198,0.15)] border-[rgba(61,214,198,0.35)] text-[var(--nw-text)]' : 'bg-white/4 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'}`}>Resolved ({events.length - firingCount})</button>
+            </div>
+            <span className="text-xs nw-subtle tabular-nums">
+              {filteredEvents.length === events.length ? `${events.length} events` : `${filteredEvents.length} of ${events.length}`}
+            </span>
+          </div>
+          <div className="grid gap-3">
+          {filteredEvents.length === 0 ? (
             <div className="nw-empty-state">
-              <h2 className="text-lg font-semibold">No alert events yet</h2>
+              <h2 className="text-lg font-semibold">{events.length === 0 ? 'No alert events yet' : 'No matches'}</h2>
               <p className="mt-2 text-sm leading-7 nw-muted">
-                Once rules fire or resolve, the event stream will give you a clean timeline of what changed and when.
+                {events.length === 0
+                  ? 'Once rules fire or resolve, the event stream will give you a clean timeline of what changed and when.'
+                  : 'Adjust your search or state filter.'}
               </p>
             </div>
           ) : (
-            events.map(event => (
+            filteredEvents.map(event => (
               <div key={event.id} className="nw-card rounded-[1.25rem] p-4 sm:p-5">
                 <div className="flex items-start gap-4">
                   <span className={`mt-1 h-2.5 w-2.5 rounded-full ${event.state === 'firing' ? 'bg-red-400' : 'bg-[var(--nw-accent)]'}`} />
@@ -264,8 +294,10 @@ export default function AlertsPage() {
               </div>
             ))
           )}
+          </div>
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }
