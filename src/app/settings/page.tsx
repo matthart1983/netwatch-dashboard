@@ -4,8 +4,29 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import { getApiKeys, createApiKey, deleteApiKey, ApiKeyInfo, getAccount, updateAccount, AccountInfo } from '@/lib/api'
+import { SOURCE_KIND } from '@/lib/source'
+
+function LocalModeNotice({ title }: { title: string }) {
+  return (
+    <div className="mt-10 max-w-3xl nw-empty-state">
+      <span className="nw-kicker">Local mode</span>
+      <h1 className="mt-4 text-3xl font-semibold">{title} isn&apos;t available in local mode</h1>
+      <p className="mb-4 mt-3 text-base leading-7 nw-muted">
+        This dashboard is running as a standalone collector. Account settings, billing, and API-key management only apply when connected to a hosted NetWatch Cloud backend.
+      </p>
+      <p className="text-sm nw-muted">
+        Your local API key lives in <code className="rounded bg-black/30 px-1">~/.netwatch-dashboard/config.json</code> (or the <code className="rounded bg-black/30 px-1">NETWATCH_DASHBOARD_API_KEY</code> env var).
+      </p>
+    </div>
+  )
+}
 
 export default function SettingsPage() {
+  if (SOURCE_KIND === 'local') return <LocalModeNotice title="Settings" />
+  return <HostedSettingsPage />
+}
+
+function HostedSettingsPage() {
   const { token, isLoading: authLoading } = useAuth()
   const router = useRouter()
   const [keys, setKeys] = useState<ApiKeyInfo[]>([])

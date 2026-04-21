@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
+import { SOURCE_KIND } from '@/lib/source'
 import { getAlertHistory } from '@/lib/api'
 
 const signedInLinks = [
@@ -92,12 +93,14 @@ export function Nav() {
                   <div className="hidden rounded-full border border-[rgba(61,214,198,0.18)] bg-[rgba(61,214,198,0.08)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#a9fff4] lg:inline-flex">
                     Live
                   </div>
-                  <button
-                    onClick={logout}
-                    className="nw-button-ghost px-4 py-2 text-sm"
-                  >
-                    Logout
-                  </button>
+                  {SOURCE_KIND !== 'local' && (
+                    <button
+                      onClick={logout}
+                      className="nw-button-ghost px-4 py-2 text-sm"
+                    >
+                      Logout
+                    </button>
+                  )}
                 </div>
               </>
             ) : (

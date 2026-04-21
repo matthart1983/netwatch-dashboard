@@ -4,8 +4,15 @@ import Link from 'next/link'
 import { Suspense, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { resetPassword } from '@/lib/api'
+import { useRedirectIfLocal } from '@/lib/use-redirect-if-local'
 
 function ResetPasswordContent() {
+  const redirecting = useRedirectIfLocal()
+  if (redirecting) return null
+  return <ResetPasswordForm />
+}
+
+function ResetPasswordForm() {
   const searchParams = useSearchParams()
   const token = searchParams.get('token') ?? ''
   const [password, setPassword] = useState('')

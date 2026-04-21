@@ -3,12 +3,16 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { requestPasswordReset } from '@/lib/api'
+import { useRedirectIfLocal } from '@/lib/use-redirect-if-local'
 
 export default function ForgotPasswordPage() {
+  const redirecting = useRedirectIfLocal()
   const [email, setEmail] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  if (redirecting) return null
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

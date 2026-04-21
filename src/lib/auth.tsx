@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useReducer, ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
+import { SOURCE_KIND } from './source'
 
 interface AuthContextType {
   token: string | null
@@ -64,6 +65,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter()
 
   useEffect(() => {
+    if (SOURCE_KIND === 'local') {
+      dispatch({
+        type: 'hydrate',
+        token: window.__NETWATCH_TOKEN__ ?? null,
+        accountId: 'local',
+      })
+      return
+    }
+
     // DEV ONLY: when the bypass flag is set, skip the login flow entirely.
     // The backend (netwatch-cloud) must also have DEV_BYPASS_AUTH=1 — it won't
     // validate the token, but having *a* token prevents client-side redirects
@@ -92,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = () => {
+    if (SOURCE_KIND === 'local') return
     localStorage.removeItem('token')
     localStorage.removeItem('accountId')
     dispatch({ type: 'logout' })

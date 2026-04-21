@@ -1,9 +1,9 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+import { SOURCE_BASE_URL, SOURCE_KIND, getToken } from './source'
 
 export async function fetchAPI(path: string, options: RequestInit = {}) {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+  const token = getToken()
 
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${SOURCE_BASE_URL}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -13,7 +13,7 @@ export async function fetchAPI(path: string, options: RequestInit = {}) {
   })
 
   if (res.status === 401) {
-    if (typeof window !== 'undefined') {
+    if (SOURCE_KIND === 'core' && typeof window !== 'undefined') {
       localStorage.removeItem('token')
       window.location.href = '/login'
     }

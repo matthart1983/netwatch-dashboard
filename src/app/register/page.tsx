@@ -5,8 +5,10 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { register as apiRegister } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { useRedirectIfLocal } from '@/lib/use-redirect-if-local'
 
 export default function RegisterPage() {
+  const redirecting = useRedirectIfLocal()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -14,6 +16,8 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false)
   const router = useRouter()
   const { login } = useAuth()
+
+  if (redirecting) return null
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

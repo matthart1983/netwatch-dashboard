@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
+import { SOURCE_KIND } from '@/lib/source'
 import { getHosts, getMetrics, getAlertHistory, Host, MetricPoint } from '@/lib/api'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import {
@@ -972,6 +973,29 @@ export default function HostsPage() {
   }
 
   if (hosts.length === 0) {
+    if (SOURCE_KIND === 'local') {
+      const apiKey = typeof window !== 'undefined' ? window.__NETWATCH_TOKEN__ ?? '' : ''
+      const origin = typeof window !== 'undefined' ? window.location.origin : ''
+      return (
+        <div className="nw-empty-state mt-10 max-w-3xl">
+          <span className="nw-kicker">First host onboarding</span>
+          <h1 className="mt-4 text-3xl font-semibold">No hosts connected yet</h1>
+          <p className="mb-4 mt-3 text-base leading-7 nw-muted">
+            Point a NetWatch agent at this dashboard to start ingesting metrics.
+          </p>
+          <div className="mt-4 space-y-3">
+            <div>
+              <div className="text-xs uppercase tracking-wider nw-subtle mb-1">Ingest URL</div>
+              <code className="block break-all rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm">{origin}/api/v1/ingest</code>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-wider nw-subtle mb-1">API key</div>
+              <code className="block break-all rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm">{apiKey}</code>
+            </div>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="nw-empty-state mt-10 max-w-3xl">
         <span className="nw-kicker">First host onboarding</span>
