@@ -1100,7 +1100,11 @@ export default function HostsPage() {
   })
 
   return (
-    <div className="space-y-3">
+    <div
+      className="-mt-8 pb-8"
+      style={{ width: '100vw', marginLeft: 'calc(-50vw + 50%)' }}
+    >
+      <div className="space-y-3 px-4 pt-4 sm:px-6 lg:px-8">
       {/* Fleet pulse strip — single compact bar replaces the narrative hero. */}
       <section className="nw-card rounded-[1rem] px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
         <PulseCount value={hosts.length} label="hosts" />
@@ -1329,6 +1333,7 @@ export default function HostsPage() {
           </div>
         </details>
       )}
+      </div>
     </div>
   )
 }
