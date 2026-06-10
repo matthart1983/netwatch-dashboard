@@ -16,7 +16,16 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
+# Railway passes matching service variables as --build-arg. These must be
+# declared before `npm run build` so Next.js bakes them into the client
+# bundle (NEXT_PUBLIC_* vars are inlined at build time, not runtime).
+# Only declare vars that are guaranteed to be set on Railway — unset
+# ARGs become empty-string ENVs that break ?? fallbacks at build time.
+ARG NEXT_PUBLIC_NETWATCH_SOURCE
+ARG NEXT_PUBLIC_NETWATCH_CORE_URL
+ENV NEXT_PUBLIC_NETWATCH_SOURCE=$NEXT_PUBLIC_NETWATCH_SOURCE \
+    NEXT_PUBLIC_NETWATCH_CORE_URL=$NEXT_PUBLIC_NETWATCH_CORE_URL \
+    NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 FROM node:22-alpine AS runner

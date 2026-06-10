@@ -83,6 +83,11 @@ export async function getHost(id: string): Promise<Host> {
   return fetchAPI(`/api/v1/hosts/${id}`)
 }
 
+/** Permanently remove a host and all of its history. Account-scoped server-side. */
+export async function deleteHost(id: string): Promise<void> {
+  await fetchAPI(`/api/v1/hosts/${id}`, { method: 'DELETE' })
+}
+
 export interface MetricPoint {
   time: string
   gateway_rtt_ms: number | null
@@ -145,6 +150,18 @@ export interface ProcessRow {
   rx_rate_bps: number
   tx_rate_bps: number
   connection_count: number
+  // Process detail (agent v0.3+); null from older agents.
+  ppid?: number | null
+  user?: string | null
+  cpu_pct?: number | null
+  mem_rss_bytes?: number | null
+  mem_virt_bytes?: number | null
+  /** Single-char scheduler state: R / S / I / Z / T… */
+  state?: string | null
+  /** RFC 3339 process start time. */
+  started_at?: string | null
+  /** Executable path (never argv). */
+  cmd?: string | null
 }
 
 export interface ProcessesResponse {
@@ -244,6 +261,12 @@ export interface AlertEvent {
   metric_value: number | null
   message: string
   created_at: string
+  acknowledged_at: string | null
+}
+
+/** Dismiss (acknowledge) a firing alert event so it drops out of the firing list/count. */
+export async function ackAlertEvent(id: number): Promise<void> {
+  await fetchAPI(`/api/v1/alerts/events/${id}/ack`, { method: 'POST' })
 }
 
 export async function getAlertRules(): Promise<AlertRule[]> {

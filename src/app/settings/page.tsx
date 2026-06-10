@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import { getApiKeys, createApiKey, deleteApiKey, ApiKeyInfo, getAccount, updateAccount, AccountInfo } from '@/lib/api'
 import { SOURCE_KIND } from '@/lib/source'
+import { TermStat } from '../_components/terminal'
+import { DashboardChrome, TopBar } from '../_components/DashboardChrome'
 
 function LocalModeNotice({ title }: { title: string }) {
   return (
@@ -105,40 +107,26 @@ function HostedSettingsPage() {
 
   const slackWebhookWillBeRemoved = Boolean(account?.has_slack_webhook) && slackWebhookDirty && slackWebhook.trim() === ''
 
-  if (authLoading || loading) return <div className="mt-10 nw-muted">Loading settings...</div>
+  if (authLoading || loading) return <div className="mt-10 font-mono text-[13px]" style={{ color: 'var(--nw-text-soft)' }}>loading settings…</div>
 
   return (
-    <div className="space-y-8">
-      <section className="nw-card rounded-[1.75rem] p-6 sm:p-8">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="space-y-3">
-            <span className="nw-kicker">Workspace settings</span>
-            <div>
-              <h1 className="nw-section-title">Shape access and notifications from one control surface.</h1>
-              <p className="mt-3 max-w-2xl text-base leading-7 nw-muted">
-                Keep the account tidy, hand out installation credentials safely, and tune how the platform reaches you when conditions change.
-              </p>
-            </div>
+    <DashboardChrome>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <TopBar crumbs={[{ label: 'Settings' }]} />
+        <div className="flex-1 overflow-auto space-y-7" style={{ padding: '20px 22px' }}>
+          <div>
+            <div className="font-mono uppercase mb-1.5" style={{ fontSize: 11, color: 'var(--nw-text-soft)', letterSpacing: '0.08em' }}>WORKSPACE · SETTINGS</div>
+            <h1 className="m-0 font-mono font-medium" style={{ fontSize: 30, letterSpacing: '-0.02em', color: 'var(--nw-text)' }}>Settings</h1>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[430px]">
-            <div className="nw-stat-card">
-              <div className="text-xs uppercase tracking-[0.18em] nw-subtle">Plan</div>
-              <div className="mt-2 text-2xl font-semibold">Free</div>
-            </div>
-            <div className="nw-stat-card">
-              <div className="text-xs uppercase tracking-[0.18em] nw-subtle">API keys</div>
-              <div className="mt-2 text-2xl font-semibold">{keys.length}</div>
-            </div>
-            <div className="nw-stat-card">
-              <div className="text-xs uppercase tracking-[0.18em] nw-subtle">Alerts</div>
-              <div className="mt-2 text-2xl font-semibold">{notifyEmail || account?.has_slack_webhook ? 'On' : 'Off'}</div>
-            </div>
-          </div>
-        </div>
-      </section>
+
+          <div className="grid gap-2.5 sm:grid-cols-3">
+            <TermStat label="plan" value="Free" />
+            <TermStat label="api keys" value={keys.length} />
+            <TermStat label="alerts" value={notifyEmail || account?.has_slack_webhook ? 'On' : 'Off'} accent={!!(notifyEmail || account?.has_slack_webhook)} />
+      </div>
 
       {account && (
-        <section className="nw-card rounded-[1.5rem] p-5 sm:p-6">
+        <section className="nw-panel p-5 sm:p-6">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-3">
               <div>
@@ -147,7 +135,7 @@ function HostedSettingsPage() {
                 <p className="mt-2 text-sm nw-muted">Member since {new Date(account.created_at).toLocaleDateString()}.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-[rgba(61,214,198,0.14)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-[#bffff8]">
+                <span className="rounded-full bg-[rgba(159,232,180,0.14)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-[#cdf0d7]">
                   Free
                 </span>
               </div>
@@ -159,7 +147,7 @@ function HostedSettingsPage() {
         </section>
       )}
 
-      <section className="nw-card rounded-[1.5rem] p-5 sm:p-6">
+      <section className="nw-panel p-5 sm:p-6">
         <div className="mb-5 space-y-2">
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--nw-text-soft)]">Notifications</p>
           <h2 className="text-2xl font-semibold">Tune the signal</h2>
@@ -223,7 +211,7 @@ function HostedSettingsPage() {
         </div>
       </section>
 
-      <section className="nw-card rounded-[1.5rem] p-5 sm:p-6">
+      <section className="nw-panel p-5 sm:p-6">
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-2">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--nw-text-soft)]">API keys</p>
@@ -236,8 +224,8 @@ function HostedSettingsPage() {
         </div>
 
         {newKey && (
-          <div className="mb-5 rounded-[1.25rem] border border-[rgba(61,214,198,0.2)] bg-[rgba(61,214,198,0.08)] p-4 sm:p-5">
-            <p className="text-sm font-semibold text-[#bffff8]">New API key created — this is the only time it will be shown.</p>
+          <div className="mb-5 rounded-[1.25rem] border border-[rgba(159,232,180,0.2)] bg-[rgba(159,232,180,0.08)] p-4 sm:p-5">
+            <p className="text-sm font-semibold text-[#cdf0d7]">New API key created — this is the only time it will be shown.</p>
             <div className="mt-3 nw-command break-all text-sm">{newKey}</div>
             <p className="mb-2 mt-4 text-sm nw-muted">Ready-to-paste install command</p>
             <div className="nw-command break-all text-xs">
@@ -259,7 +247,7 @@ function HostedSettingsPage() {
 
         <div className="grid gap-3">
           {keys.map(key => (
-            <div key={key.id} className="nw-card-soft rounded-[1.2rem] p-4">
+            <div key={key.id} className="nw-panel p-4">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="font-mono text-sm text-[var(--nw-text)]">{key.key_prefix}...</div>
@@ -285,7 +273,7 @@ function HostedSettingsPage() {
       </section>
 
       <div className="grid gap-6 xl:grid-cols-2">
-        <section className="nw-card rounded-[1.5rem] p-5 sm:p-6">
+        <section className="nw-panel p-5 sm:p-6">
           <div className="mb-4 space-y-2">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--nw-text-soft)]">Install agent</p>
             <h2 className="text-2xl font-semibold">One command, predictable rollout</h2>
@@ -298,7 +286,7 @@ function HostedSettingsPage() {
           </div>
         </section>
 
-        <section className="nw-card rounded-[1.5rem] p-5 sm:p-6">
+        <section className="nw-panel p-5 sm:p-6">
           <div className="mb-4 space-y-2">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--nw-text-soft)]">Runbook snippets</p>
             <h2 className="text-2xl font-semibold">Useful operator commands</h2>
@@ -317,6 +305,8 @@ function HostedSettingsPage() {
           </div>
         </section>
       </div>
-    </div>
+        </div>
+      </div>
+    </DashboardChrome>
   )
 }

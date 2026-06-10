@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import { SOURCE_KIND } from '@/lib/source'
 import { getAlertHistory } from '@/lib/api'
+import { PulseLogo } from './_components/PulseLogo'
 
 const signedInLinks = [
   { href: '/', label: 'Fleet' },
@@ -34,16 +35,28 @@ export function Nav() {
     return () => { cancelled = true; clearInterval(id) }
   }, [token])
 
-  // Landing page and Labs pages have their own navs
-  if (!isLoading && !token && pathname === '/') return null
+  // Pages with their own chrome:
+  //   - landing (`/` unauth) — terminal-frame nav
+  //   - labs — its own header
+  //   - dashboard (`/` auth, `/hosts/...`) — left sidebar
+  // `/` is unconditional — hide before auth resolves too, otherwise the bar
+  // flashes on slow hydration (visible on mobile).
+  if (pathname === '/') return null
   if (pathname?.startsWith('/labs')) return null
+  if (pathname?.startsWith('/cloud')) return null
+  if (pathname?.startsWith('/hosts')) return null
+  // these are dashboard pages — they render their own DashboardChrome shell
+  if (pathname?.startsWith('/alerts')) return null
+  if (pathname?.startsWith('/settings')) return null
+  if (pathname?.startsWith('/admin')) return null
+  if (pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password') return null
 
   return (
     <nav className="sticky top-0 z-40 border-b border-white/6 bg-[#08111a]/78 backdrop-blur-xl">
       <div className="mx-auto flex w-full max-w-[1320px] flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8 md:h-[4.5rem] md:flex-row md:items-center md:justify-between md:gap-6 md:py-0">
         <Link href="/" className="group flex min-w-0 items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[rgba(61,214,198,0.25)] bg-[rgba(61,214,198,0.12)] text-sm font-semibold text-[var(--nw-text)] shadow-[0_10px_30px_rgba(61,214,198,0.18)]">
-            NW
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[rgba(159,232,180,0.25)] bg-[rgba(159,232,180,0.12)] shadow-[0_10px_30px_rgba(159,232,180,0.18)]">
+            <PulseLogo size={26} accent="var(--nw-accent)" fg="var(--nw-text)" />
           </div>
           <div className="min-w-0 leading-tight">
             <div className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-[var(--nw-text-soft)]">
@@ -75,7 +88,7 @@ export function Nav() {
                         href={link.href}
                         className={`flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-colors ${
                           isActive
-                            ? 'bg-[rgba(61,214,198,0.16)] text-[var(--nw-text)]'
+                            ? 'bg-[rgba(159,232,180,0.16)] text-[var(--nw-text)]'
                             : 'text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'
                         } shrink-0`}
                       >
@@ -90,7 +103,7 @@ export function Nav() {
                   })}
                 </div>
                 <div className="order-1 flex items-center justify-between gap-2 sm:gap-3 md:order-2 md:justify-end">
-                  <div className="hidden rounded-full border border-[rgba(61,214,198,0.18)] bg-[rgba(61,214,198,0.08)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#a9fff4] lg:inline-flex">
+                  <div className="hidden rounded-full border border-[rgba(159,232,180,0.18)] bg-[rgba(159,232,180,0.08)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#cdf0d7] lg:inline-flex">
                     Live
                   </div>
                   {SOURCE_KIND !== 'local' && (

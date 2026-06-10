@@ -1,0 +1,821 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NetWatch — Architecture Tour</title>
+<style>
+  /* ── Catppuccin Mocha palette (matches the NetWatch TUI theme) ───────── */
+  :root{
+    --crust:#11111b; --mantle:#181825; --base:#1e1e2e;
+    --surface0:#313244; --surface1:#45475a; --surface2:#585b70;
+    --overlay:#6c7086; --subtext:#a6adc8; --text:#cdd6f4;
+    --mauve:#cba6f7; --blue:#89b4fa; --sapphire:#74c7ec; --sky:#89dceb;
+    --green:#a6e3a1; --yellow:#f9e2af; --peach:#fab387; --red:#f38ba8;
+    --pink:#f5c2e7; --teal:#94e2d5; --lavender:#b4befe;
+    --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 800px at 80% -10%, #232336 0%, transparent 60%),
+      radial-gradient(1000px 700px at -10% 110%, #1b1b2b 0%, transparent 55%),
+      var(--base);
+    color:var(--text); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+  }
+
+  /* ── Chrome: progress, counter, brand ────────────────────────────────── */
+  #progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--mauve),var(--blue),var(--teal));width:0;z-index:50;transition:width .25s ease}
+  #brand{position:fixed;top:14px;left:20px;z-index:40;font-family:var(--mono);font-size:13px;letter-spacing:.5px;color:var(--subtext)}
+  #brand b{color:var(--text)}
+  #brand .dot{color:var(--green)}
+  #counter{position:fixed;bottom:14px;right:20px;z-index:40;font-family:var(--mono);font-size:13px;color:var(--overlay)}
+  #counter b{color:var(--subtext)}
+  #hint{position:fixed;bottom:14px;left:20px;z-index:40;font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  #hint kbd{color:var(--subtext)}
+  kbd{font-family:var(--mono);background:var(--surface0);border:1px solid var(--surface1);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:.85em;color:var(--text)}
+
+  /* ── Deck / slides ───────────────────────────────────────────────────── */
+  #deck{position:relative;height:100vh;width:100vw}
+  .slide{
+    position:absolute;inset:0;display:none;overflow:hidden;
+    opacity:0;transition:opacity .35s ease;
+  }
+  .slide.active{display:block;opacity:1}
+  /* Absolutely centered, then scaled by fit() so a slide always fits the
+     viewport — never scrolls, never clips, in every browser (including
+     Safari, which hides scrollbars entirely). The transform is owned by
+     fit(): translate(-50%,-50%) to center + scale(s) to fit. */
+  .wrap{position:absolute;left:50%;top:50%;width:1100px;max-width:90vw;
+        transform:translate(-50%,-50%);transform-origin:center center}
+
+  h1{font-size:clamp(30px,4.6vw,52px);line-height:1.05;margin:0 0 14px;letter-spacing:-.02em}
+  h1 .grad{background:linear-gradient(90deg,var(--mauve),var(--sapphire),var(--teal));-webkit-background-clip:text;background-clip:text;color:transparent}
+  h2{font-size:clamp(20px,2.6vw,29px);margin:0 0 4px;letter-spacing:-.01em}
+  .kick{font-family:var(--mono);font-size:12.5px;text-transform:uppercase;letter-spacing:.22em;color:var(--mauve);margin:0 0 9px}
+  .lede{font-size:clamp(14px,1.55vw,16.5px);color:var(--subtext);line-height:1.5;max-width:58ch}
+  p{line-height:1.6}
+  .muted{color:var(--subtext)}
+  .small{font-size:14px}
+  ul.clean{list-style:none;padding:0;margin:14px 0 0}
+  ul.clean li{padding:4px 0 4px 24px;position:relative;color:var(--subtext);line-height:1.45;font-size:14px}
+  ul.clean li::before{content:"▸";position:absolute;left:0;color:var(--blue)}
+  ul.clean li b{color:var(--text)}
+  code.inl{font-family:var(--mono);background:var(--surface0);border:1px solid var(--surface1);border-radius:6px;padding:1px 6px;font-size:.88em;color:var(--lavender)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--surface1);color:var(--subtext);margin:0 6px 6px 0;background:var(--mantle)}
+  .tag.k{color:var(--mauve);border-color:#3a2f50}
+  .tag.g{color:var(--green);border-color:#2f4a36}
+  .tag.b{color:var(--blue);border-color:#2b3d5c}
+
+  .cols{display:grid;grid-template-columns:1.05fr .95fr;gap:34px;align-items:start}
+  @media(max-width:880px){.cols{grid-template-columns:1fr;gap:20px}}
+
+  /* ── Code blocks ─────────────────────────────────────────────────────── */
+  .code{position:relative;background:var(--crust);border:1px solid var(--surface0);border-radius:12px;overflow:hidden;box-shadow:0 18px 40px -24px #000}
+  .code .bar{display:flex;align-items:center;gap:7px;padding:9px 13px;background:var(--mantle);border-bottom:1px solid var(--surface0)}
+  .code .bar i{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .code .bar .r{background:#f38ba8}.code .bar .y{background:#f9e2af}.code .bar .g{background:#a6e3a1}
+  .code .bar span{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  pre{margin:0;padding:11px 14px;overflow:auto;font-family:var(--mono);font-size:clamp(10px,1.05vw,12px);line-height:1.45;tab-size:4}
+  pre code{white-space:pre}
+  .cap{font-family:var(--mono);font-size:10.5px;color:var(--overlay);margin:7px 2px 0;line-height:1.4}
+  /* syntax */
+  .kw{color:var(--mauve)} .ty{color:var(--yellow)} .fn{color:var(--blue)}
+  .s{color:var(--green)} .c{color:var(--overlay);font-style:italic}
+  .n{color:var(--peach)} .macro{color:var(--teal)} .attr{color:var(--peach)} .lt{color:var(--pink)}
+
+  /* ── Diagram primitives ──────────────────────────────────────────────── */
+  .diagram{display:flex;gap:10px;align-items:stretch;justify-content:center;flex-wrap:wrap;margin-top:8px}
+  .col{flex:1 1 0;min-width:150px;background:var(--mantle);border:1px solid var(--surface0);border-radius:12px;padding:13px}
+  .col h4{margin:0 0 10px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--subtext)}
+  .node{font-family:var(--mono);font-size:12.5px;background:var(--surface0);border:1px solid var(--surface1);border-radius:8px;padding:7px 10px;margin:6px 0;color:var(--text)}
+  .node.k{border-color:#3a2f50;color:var(--mauve)} .node.g{border-color:#2f4a36;color:var(--green)}
+  .node.b{border-color:#2b3d5c;color:var(--blue)} .node.p{border-color:#5c3a44;color:var(--pink)}
+  .node.y{border-color:#5c512b;color:var(--yellow)}
+  .arrow{align-self:center;font-size:26px;color:var(--overlay);padding:0 2px}
+  @media(max-width:820px){.arrow{transform:rotate(90deg)}}
+
+  .flowv{display:flex;flex-direction:column;gap:0;align-items:center;font-family:var(--mono);margin-top:6px}
+  .flowv .node{min-width:min(560px,86vw);text-align:center}
+  .flowv .down{color:var(--overlay);font-size:20px;line-height:1}
+
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:6px}
+  .card{background:var(--mantle);border:1px solid var(--surface0);border-radius:12px;padding:14px 16px}
+  .card h4{margin:0 0 6px;font-size:15px;color:var(--text)}
+  .card h4 .loc{font-family:var(--mono);font-size:11px;color:var(--overlay);float:right;font-weight:400}
+  .card p{margin:0;font-size:12.5px;color:var(--subtext);line-height:1.45}
+
+  /* ── Overview grid ───────────────────────────────────────────────────── */
+  #overview{position:fixed;inset:0;z-index:60;background:rgba(17,17,27,.93);backdrop-filter:blur(6px);display:none;padding:60px clamp(20px,5vw,80px);overflow:auto}
+  #overview.open{display:block}
+  #overview h3{font-family:var(--mono);color:var(--subtext);font-weight:500;letter-spacing:.1em;text-transform:uppercase;font-size:13px;margin:0 0 18px}
+  .ovgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+  .ov{background:var(--mantle);border:1px solid var(--surface0);border-radius:10px;padding:12px 13px;cursor:pointer;transition:.15s;display:flex;gap:10px;align-items:baseline}
+  .ov:hover{border-color:var(--mauve);transform:translateY(-2px);background:var(--base)}
+  .ov .num{font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  .ov .t{font-size:14px;color:var(--text);line-height:1.3}
+
+  /* ── Help overlay ────────────────────────────────────────────────────── */
+  #help{position:fixed;inset:0;z-index:70;background:rgba(17,17,27,.9);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center}
+  #help.open{display:flex}
+  #help .box{background:var(--base);border:1px solid var(--surface1);border-radius:16px;padding:26px 30px;max-width:440px;width:90%}
+  #help h3{margin:0 0 16px;font-size:20px}
+  #help table{width:100%;border-collapse:collapse;font-size:14px}
+  #help td{padding:7px 0;color:var(--subtext)}
+  #help td:first-child{width:46%}
+  .esc{color:var(--overlay);font-size:12px;text-align:center;margin-top:16px;font-family:var(--mono)}
+
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:var(--surface1);border-radius:8px}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+<div id="brand"><b>NetWatch</b> <span class="muted">architecture tour</span> <span class="dot">●</span></div>
+<div id="counter"><b id="cnum">1</b> / <span id="ctot">0</span></div>
+<div id="hint"><kbd>→</kbd> next · <kbd>o</kbd> overview · <kbd>?</kbd> help</div>
+
+<main id="deck">
+
+  <!-- 1 ─ Title -->
+  <section class="slide" data-title="Title">
+    <div class="wrap">
+      <p class="kick">Contributor deep-dive</p>
+      <h1>How <span class="grad">NetWatch</span> works,<br>from the kernel up.</h1>
+      <p class="lede">A real-time network-diagnostics TUI in Rust — capture, 15-protocol DPI, live TLS&nbsp;1.3 / QUIC decryption, per-process attribution, and a Landlock sandbox, all from one tick loop.</p>
+      <div style="margin-top:20px">
+        <span class="tag k">~33k LOC Rust</span>
+        <span class="tag b">ratatui · 9 tabs</span>
+        <span class="tag g">tokio + threads</span>
+        <span class="tag">pcap · eBPF · Landlock</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 ─ 10,000ft -->
+  <section class="slide" data-title="The 10,000ft view">
+    <div class="wrap">
+      <p class="kick">The shape of the program</p>
+      <h2>One owner, many feeders</h2>
+      <p class="lede" style="margin-bottom:14px">OS/kernel sources feed <b>collectors</b> on background threads; each publishes into the single <b>App</b> state, which the loop renders immediate-mode.</p>
+      <div class="diagram">
+        <div class="col">
+          <h4>Kernel / OS sources</h4>
+          <div class="node k">libpcap capture</div>
+          <div class="node k">eBPF kprobe · PKTAP</div>
+          <div class="node k">ss · lsof · /proc</div>
+          <div class="node k">SSLKEYLOGFILE</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="col">
+          <h4>Collectors (threads)</h4>
+          <div class="node g">traffic · connections</div>
+          <div class="node g">packets + DPI</div>
+          <div class="node g">health · network-intel</div>
+          <div class="node g">incident recorder</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="col">
+          <h4>App state</h4>
+          <div class="node b">single owner</div>
+          <div class="node b">Arc&lt;Mutex&gt; / RwLock</div>
+          <div class="node b">tick-driven refresh</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="col">
+          <h4>UI (ratatui)</h4>
+          <div class="node p">9 tab renderers</div>
+          <div class="node p">help / settings overlays</div>
+          <div class="node p">immediate-mode draw</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 ─ Source map -->
+  <section class="slide" data-title="Source map">
+    <div class="wrap">
+      <p class="kick">Where things live</p>
+      <h2>The crate, by weight</h2>
+      <div class="grid2">
+        <div class="card"><h4>src/collectors/ <span class="loc">~11k</span></h4><p>13 collectors — traffic, connections, packets+DPI, health, network-intel, incident, geo, insights, and more.</p></div>
+        <div class="card"><h4>src/ui/ <span class="loc">~10k</span></h4><p>One render module per tab plus shared <code class="inl">widgets.rs</code>, help, settings, and the sort-picker overlay.</p></div>
+        <div class="card"><h4>src/dpi/ <span class="loc">~5k</span></h4><p>15 L7 classifiers, the JA4/JA4Q fingerprinters, and the TLS&nbsp;1.3 / QUIC decryptors.</p></div>
+        <div class="card"><h4>src/app.rs <span class="loc">~3.2k</span></h4><p>The <code class="inl">App</code> state struct, the <code class="inl">run()</code> event loop, <code class="inl">tick()</code>, and every key/mouse handler.</p></div>
+        <div class="card"><h4>src/platform/ <span class="loc">~1.5k</span></h4><p>OS-specific interface stats &amp; capture helpers — Linux, macOS (incl. PKTAP), Windows.</p></div>
+        <div class="card"><h4>src/sandbox/ · src/ebpf/ <span class="loc">~1k</span></h4><p>Landlock + capability-drop sandbox, and the optional eBPF connection tracker / RTT monitor.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 ─ run loop -->
+  <section class="slide" data-title="The runtime spine">
+    <div class="wrap">
+      <p class="kick">main.rs → app::run</p>
+      <h2>The event loop</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">After <code class="inl">main</code> puts the terminal in raw / alternate-screen mode, control hands to <code class="inl">app::run</code>. Its shape is the whole program in miniature:</p>
+          <ul class="clean">
+            <li><b>render</b> — draw current state for the active tab</li>
+            <li><b>wait</b> — block on the next <code class="inl">AppEvent</code></li>
+            <li><b>handle</b> — key/mouse mutate state directly; a tick refreshes collectors</li>
+          </ul>
+          <p class="small muted">The sandbox is applied <i>here</i>, right after <code class="inl">App::new()</code> — once pcap, PKTAP and the eBPF kprobe are already open, privileges can be dropped.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/app.rs — run()</span></div><div data-rust><script type="text/plain">pub async fn run(/* … */) -> Result<()> {
+    let mut app = App::new();
+
+    // pcap + PKTAP + eBPF kprobe are open —
+    // now drop caps & restrict the filesystem.
+    app.sandbox_report = sandbox::apply(mode, &paths);
+
+    loop {                              // render → wait → handle
+        terminal.draw(|f| ui::render(f, &app))?;
+        match events.next().await? {
+            AppEvent::Key(k)   => if handle_key(&mut app, k) { break },
+            AppEvent::Mouse(m) => handle_mouse(&mut app, m),
+            AppEvent::Tick     => app.tick(),
+        }
+    }
+    Ok(())
+}</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 ─ event.rs -->
+  <section class="slide" data-title="Event model">
+    <div class="wrap">
+      <p class="kick">src/event.rs</p>
+      <h2>Input on its own thread</h2>
+      <div class="cols">
+        <div>
+          <p class="lede"><code class="inl">poll()</code> blocks, so input runs on a <b>dedicated OS thread</b> that funnels key/mouse events — and, on timeout, synthetic <b>ticks</b> — into an mpsc channel.</p>
+          <ul class="clean">
+            <li>The poll timeout <b>is</b> the tick interval</li>
+            <li>Tick rate is an <code class="inl">Arc&lt;AtomicU64&gt;</code> — the Settings overlay changes refresh rate live, no restart</li>
+            <li>Three event kinds, one channel: <code class="inl">Key</code>, <code class="inl">Mouse</code>, <code class="inl">Tick</code></li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/event.rs</span></div><div data-rust><script type="text/plain">pub enum AppEvent { Key(KeyEvent), Mouse(MouseEvent), Tick }
+
+// Dedicated OS thread — poll() blocks, keep it off the tokio pool.
+std::thread::spawn(move || loop {
+    let dur = Duration::from_millis(tick_rate.load(Ordering::Relaxed));
+    if event::poll(dur).unwrap_or(false) {
+        match event::read() {
+            Ok(Event::Key(k)) if k.kind == KeyEventKind::Press =>
+                { tx.send(AppEvent::Key(k)).ok(); }
+            Ok(Event::Mouse(m)) => { tx.send(AppEvent::Mouse(m)).ok(); }
+            _ => {}
+        }
+    } else {
+        tx.send(AppEvent::Tick).ok();   // timed out → emit a tick
+    }
+});</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 ─ tick cadence -->
+  <section class="slide" data-title="Tick cadence">
+    <div class="wrap">
+      <p class="kick">app::tick()</p>
+      <h2>One tick, staggered work</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A counter per subsystem spreads expensive work across ticks, so a ~1&nbsp;Hz heartbeat never hammers <code class="inl">lsof</code> or ICMP. (Packet capture runs off-clock, on its own thread.)</p>
+          <div class="diagram" style="margin-top:12px">
+            <div class="node g">traffic<br><span class="small muted">every tick</span></div>
+            <div class="node g">connections<br><span class="small muted">~1s</span></div>
+            <div class="node b">health probes<br><span class="small muted">~5s</span></div>
+            <div class="node b">interfaces+config<br><span class="small muted">~10s</span></div>
+          </div>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/app.rs — tick()</span></div><div data-rust><script type="text/plain">fn tick(&mut self) {
+    if self.ui.paused { return; }
+    self.traffic.update();              // every tick (~1s)
+
+    if self.conn_tick.due() {           // ~1s: sockets → attribution
+        self.connection_collector.update();
+        self.process_bandwidth.update(&conns, &ifaces);
+    }
+    self.feed_network_intel();          // packets → threat detectors
+
+    if self.health_tick.due() {         // ~5s: gateway + DNS probes
+        self.health_prober.probe(gateway, dns);
+    }
+    // …interfaces + config refresh every ~10s…
+}</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 ─ concurrency -->
+  <section class="slide" data-title="Concurrency model">
+    <div class="wrap">
+      <p class="kick">Keeping the UI smooth</p>
+      <h2>Single-flight background work</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Collectors do blocking I/O (<code class="inl">lsof</code>, syscalls, sockets). The rule: <b>never block the render loop</b>. Each collector spawns a thread, writes into shared state, and the UI reads the last snapshot.</p>
+          <ul class="clean">
+            <li>Shared state is <code class="inl">Arc&lt;Mutex&gt;</code> / <code class="inl">RwLock</code></li>
+            <li>A <code class="inl">busy</code> <code class="inl">AtomicBool</code> + <code class="inl">compare_exchange</code> is a <b>single-flight guard</b> — if last sample's still running, skip rather than stack threads</li>
+            <li>Capture start/stop coordinates through atomics too</li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/collectors/traffic.rs — update()</span></div><div data-rust><script type="text/plain">pub fn update(&self) {
+    // Single-flight: if a prior sample is still running,
+    // skip this tick instead of piling threads up.
+    if self.busy
+        .compare_exchange(false, true, Acquire, Relaxed)
+        .is_err() { return; }
+
+    let snapshot = Arc::clone(&self.snapshot);
+    thread::spawn(move || {
+        let cur = platform::collect_interface_stats()?;
+        // …rx/tx deltas over elapsed → rolling sparkline…
+        busy.store(false, Release);
+    });
+}</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 ─ connections / attribution -->
+  <section class="slide" data-title="Connections & attribution">
+    <div class="wrap">
+      <p class="kick">Who owns this socket?</p>
+      <h2>Three attribution sources, merged</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">The Connections tab maps each flow to a <b>(pid, process)</b>. Userspace polling (<code class="inl">lsof</code>/<code class="inl">ss</code>) is the portable baseline — but it misses short-lived flows. Two <b>kernel</b> paths fill that gap.</p>
+          <ul class="clean">
+            <li><b>Lsof</b> — portable userspace fallback</li>
+            <li><b>Pktap</b> — macOS kernel capture carries the owning pid</li>
+            <li><b>Ebpf</b> — Linux <code class="inl">tcp_v4_connect</code> kprobe, drained from a ring buffer into an attribution cache</li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/collectors/connections.rs</span></div><div data-rust><script type="text/plain">/// Where a connection's (pid, process) came from.
+/// Kernel paths catch short-lived flows lsof misses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AttributionSource {
+    #[default]
+    Lsof,    // userspace fallback (lsof / ss)
+    Pktap,   // macOS PKTAP kernel capture
+    Ebpf,    // Linux tcp_v4_connect kprobe
+}</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 ─ packet pipeline -->
+  <section class="slide" data-title="Packet pipeline">
+    <div class="wrap">
+      <p class="kick">src/collectors/packets/</p>
+      <h2>From wire to stream</h2>
+      <p class="lede" style="margin-bottom:14px">A capture thread reads frames in batches, parses L2–L4, threads each into its <b>Stream</b>, runs DPI <i>once per stream</i>, and decrypts when keys are available — all into a bounded ring buffer.</p>
+      <div class="flowv">
+        <div class="node k">libpcap thread · snaplen 65535 · 64-packet batches</div><div class="down">↓</div>
+        <div class="node">parse Ethernet / IP / TCP·UDP</div><div class="down">↓</div>
+        <div class="node g">StreamTracker — reassembly · ≤1024 flows (LRU)</div><div class="down">↓</div>
+        <div class="node b">classify_once() — DPI, cached per stream</div><div class="down">↓</div>
+        <div class="node p">try_decrypt_tls_record / _quic_1rtt</div><div class="down">↓</div>
+        <div class="node y">ring buffer — newest 5000 · Packets tab + PCAP</div>
+      </div>
+      <p class="cap">Bounded everywhere — 5000 packets, ≤1024 streams, ≤2&nbsp;MB/stream. A diagnostics tool must never OOM the box.</p>
+    </div>
+  </section>
+
+  <!-- 10 ─ DPI -->
+  <section class="slide" data-title="Deep packet inspection">
+    <div class="wrap">
+      <p class="kick">src/dpi/ · 15 classifiers</p>
+      <h2>One trait, priority dispatch</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Every protocol decoder implements one trait. <code class="inl">classify_once</code> runs them in priority order — cheap magic-byte checks first, parser-based ones last — and the first match wins, then it's cached on the stream.</p>
+          <div style="margin-top:12px">
+            <span class="tag b">TLS</span><span class="tag b">HTTP</span><span class="tag b">QUIC</span><span class="tag b">DNS</span><span class="tag b">SSH</span><span class="tag">DHCP</span><span class="tag">NTP</span><span class="tag">MQTT</span><span class="tag">STUN</span><span class="tag">SNMP</span><span class="tag">SSDP</span><span class="tag">LLMNR</span><span class="tag">NetBIOS</span><span class="tag">FTP</span><span class="tag">BitTorrent</span><span class="tag">HTTP/3</span>
+          </div>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/dpi/mod.rs</span></div><div data-rust><script type="text/plain">pub trait Classifier {
+    /// Some(protocol) if recognized, None to fall through.
+    fn classify(&self, payload: &[u8], is_tcp: bool) -> Option<AppProtocol>;
+}
+
+/// Priority order; first match wins, cached on the stream.
+/// Cheap magic-byte checks first, parser-based last.
+pub fn classify_once(p: &[u8], is_tcp: bool, /* ports */) {
+    if is_tcp {
+        // BitTorrent → SSH → HTTP → TLS
+    } else {
+        // QUIC, then port-gated DHCP/NTP/SNMP/DNS/…
+    }
+}</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11 ─ TLS decryption -->
+  <section class="slide" data-title="TLS 1.3 decryption">
+    <div class="wrap">
+      <p class="kick">src/dpi/tls_decrypt.rs</p>
+      <h2>The Wireshark trick, in a TUI</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A client launched with <code class="inl">SSLKEYLOGFILE</code> appends its secrets to a file. NetWatch tails it, indexes by the <b>ClientHello random</b> on the wire, derives AEAD keys, and reads TLS&nbsp;1.3 plaintext.</p>
+          <div class="flowv" style="margin-top:8px">
+            <div class="node p">SSLKEYLOGFILE → secret (by client_random)</div><div class="down">↓</div>
+            <div class="node">HKDF-Expand-Label → key + iv</div><div class="down">↓</div>
+            <div class="node g">AEAD-open(nonce = iv ⊕ seq) → plaintext</div>
+          </div>
+          <p class="small muted" style="margin-top:10px"><b>Read-only by design</b> — only when the client cooperatively exports its keys. Production traffic, malware, third parties never are.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/dpi/tls_decrypt path — StreamTracker</span></div><div data-rust><script type="text/plain">pub fn try_decrypt_tls_record(&mut self, idx: u32,
+                              payload: &[u8]) -> Option<Vec<u8>> {
+    // App-Data record: type 0x17, version 0x03xx, length.
+    if payload[0] != 0x17 { return None; }
+
+    // Lazy-derive keys once the keylog has this flow's secrets.
+    let cr = stream.tls_client_random?;   // need ClientHello
+    // HKDF-Expand-Label(secret) → {key, iv}
+    // AEAD-open(key, iv ⊕ seq, aad, ct) → plaintext
+}</script></div></div>
+      </div>
+      <p class="cap">Verified vs RFC&nbsp;8448 vectors + live captures. QUIC 1-RTT reuses the same primitives — <code class="inl">try_decrypt_quic_1rtt</code>.</p>
+    </div>
+  </section>
+
+  <!-- 12 ─ eBPF -->
+  <section class="slide" data-title="eBPF subsystem">
+    <div class="wrap">
+      <p class="kick">src/ebpf/ · optional feature</p>
+      <h2>Kernel-level attribution</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Behind <code class="inl">--features ebpf</code> (Linux), a kprobe on <code class="inl">tcp_v4_connect</code> fires at connect-entry. A background thread drains decoded events from the SDK's channel into an attribution cache the Connections collector consults.</p>
+          <ul class="clean">
+            <li>Off by default; <b>stubs</b> keep every other platform compiling</li>
+            <li>Status is surfaced in the UI: <code class="inl">Active</code> / <code class="inl">Unavailable</code> / <code class="inl">NotCompiled</code></li>
+            <li>Phase 1 = IPv4 TCP connect only; keyed by <code class="inl">(daddr, dport)</code> since the source port isn't assigned yet at connect-entry</li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/ebpf/mod.rs</span></div><div data-rust><script type="text/plain">//! eBPF subsystem — Linux + `--features ebpf` only.
+//! When not compiled, stubs keep every platform building.
+
+pub enum EbpfStatus {
+    Active,               // kprobe loaded and firing
+    Unavailable(String),  // compiled in, attach failed
+    NotCompiled,          // built without the feature
+}</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13 ─ sandbox -->
+  <section class="slide" data-title="Security sandbox">
+    <div class="wrap">
+      <p class="kick">src/sandbox/ · Landlock</p>
+      <h2>Earn privilege, then drop it</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">NetWatch may run under <code class="inl">sudo</code> for capture. So the moment setup is done — pcap fds open, kprobe attached — it <b>drops capabilities</b> and draws a Landlock filesystem boundary. A sudo'd NetWatch still can't read your home dir.</p>
+          <div class="flowv" style="margin-top:8px">
+            <div class="node k">App::new() — open pcap · PKTAP · eBPF (needs caps)</div><div class="down">↓</div>
+            <div class="node p">sandbox::apply() — drop CAP_NET_RAW/BPF/PERFMON · Landlock</div><div class="down">↓</div>
+            <div class="node g">run loop — restricted: read /proc + dbs, write cache/exports only</div>
+          </div>
+          <p class="small muted" style="margin-top:10px"><b>Three modes:</b> <code class="inl">Disabled</code> · <code class="inl">BestEffort</code> (degrade quietly on old kernels) · <code class="inl">Strict</code> (refuse to start if it can't enforce).</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/sandbox/mod.rs</span></div><div data-rust><script type="text/plain">//! Phase 1 (Linux): drop caps + Landlock FS/net restriction,
+//! applied AFTER setup (kprobe & pcap fds already open).
+//! Drops CAP_NET_RAW/BPF/PERFMON; read /proc + dbs, write cache.
+
+pub enum Mode {
+    Disabled,    // --no-sandbox escape hatch
+    BestEffort,  // default: degrade on old kernels
+    Strict,      // --sandbox-strict: fail if unenforceable
+}</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 14 ─ flight recorder -->
+  <section class="slide" data-title="Flight recorder">
+    <div class="wrap">
+      <p class="kick">src/collectors/incident.rs</p>
+      <h2>Catch the incident, export the bundle</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A rolling window keeps recent connections, health, bandwidth, DNS, alerts — and packets when capture is on. A critical threat alert can <b>auto-freeze</b> the window so the evidence survives.</p>
+          <ul class="clean">
+            <li><kbd>Shift</kbd>+<kbd>R</kbd> arm / disarm the rolling recorder</li>
+            <li><kbd>Shift</kbd>+<kbd>F</kbd> freeze the current incident window</li>
+            <li><kbd>Shift</kbd>+<kbd>E</kbd> export the bundle to your home dir</li>
+          </ul>
+          <p class="small muted">Detectors (port scan, beaconing, DNS tunnel) in <code class="inl">network_intel.rs</code> feed both the dashboard and the recorder.</p>
+        </div>
+        <div>
+          <div class="card">
+            <h4>Exported incident bundle</h4>
+            <p style="font-family:var(--mono);font-size:13px;line-height:1.9;color:var(--subtext);margin-top:8px">
+              📄 summary.md<br>
+              📄 manifest.json<br>
+              📄 connections.json · health.json<br>
+              📄 bandwidth.json · dns.json · alerts.json<br>
+              📦 packets.pcap <span class="muted">(when captured)</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 15 ─ UI layer -->
+  <section class="slide" data-title="The UI layer">
+    <div class="wrap">
+      <p class="kick">src/ui/ · ratatui</p>
+      <h2>Immediate-mode, one fn per tab</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">There's no retained widget tree. Every frame, the active tab's <code class="inl">render(f, &amp;app, area)</code> reads the <i>current</i> snapshot and paints from scratch — so the screen can never drift from state.</p>
+          <ul class="clean">
+            <li>9 tab modules + <code class="inl">widgets.rs</code> shared building blocks</li>
+            <li>Overlays (help, settings, sort-picker, memory-stats) draw on top of whichever tab is active</li>
+            <li><code class="inl">theme.rs</code> + <code class="inl">graph.rs</code> drive colors, sparklines, fade — the look you see in the demo</li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/app.rs — terminal.draw()</span></div><div data-rust><script type="text/plain">terminal.draw(|f| {
+    match app.ui.current_tab {
+        Tab::Dashboard   => ui::dashboard::render(f, &app, area),
+        Tab::Connections => ui::connections::render(f, &app, area),
+        Tab::Packets     => ui::packets::render(f, &app, area),
+        // … one render fn per tab (9 total) …
+    }
+    if app.ui.show_help     { ui::help::render(f, &app, area); }
+    if app.ui.show_settings { ui::settings::render(f, &app, area); }
+})?;</script></div></div>
+      </div>
+      <p class="cap">Render takes <code class="inl">&amp;app</code> — reads only. Writes live in the key/tick handlers.</p>
+    </div>
+  </section>
+
+  <!-- 16 ─ remote -->
+  <section class="slide" data-title="Remote publishing">
+    <div class="wrap">
+      <p class="kick">src/remote.rs · optional</p>
+      <h2>Stream snapshots to Core</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">With <code class="inl">--remote &lt;url&gt; --api-key &lt;key&gt;</code>, NetWatch becomes an agent — each tick it builds a JSON snapshot (host, interfaces, health) and a thread POSTs it to Core.</p>
+          <ul class="clean">
+            <li>Entirely opt-in — zero network egress without the flags</li>
+            <li>The publisher owns its own thread; the run loop just calls <code class="inl">update()</code></li>
+            <li>Snapshot shape mirrors the cloud dashboard's ingest contract</li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>src/remote.rs</span></div><div data-rust><script type="text/plain">pub fn start(&self) {
+    thread::spawn(move || loop {
+        let snapshot = safe_lock(&data, "remote").take();
+        let body = json!({ "host_id": host_id, "snapshots": [snapshot] });
+
+        ureq::post(&endpoint)
+            .set("Authorization", &format!("Bearer {api_key}"))
+            .send_json(body)
+            .ok();
+
+        // …sleep, repeat: push host + interface + health snapshot…
+    });
+}</script></div></div>
+      </div>
+      <p class="cap">The seam between the OSS TUI and the cloud product — the agent half lives here.</p>
+    </div>
+  </section>
+
+  <!-- 17 ─ contributing -->
+  <section class="slide" data-title="Start contributing">
+    <div class="wrap">
+      <p class="kick">Your first patch</p>
+      <h2>Add a protocol in one file</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">The DPI layer is the friendliest on-ramp — self-contained, well-bounded, immediately visible in the Packets tab.</p>
+          <ul class="clean">
+            <li><b>1.</b> New file in <code class="inl">src/dpi/</code> with a struct implementing <code class="inl">Classifier::classify</code></li>
+            <li><b>2.</b> Add an <code class="inl">AppProtocol</code> variant for what you extract</li>
+            <li><b>3.</b> Wire it into <code class="inl">classify_once</code> in priority order (cheap checks first)</li>
+            <li><b>4.</b> It now renders live in the Packets tab — no UI work needed</li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>build &amp; verify (CONTRIBUTING.md)</span></div><div data-rust><script type="text/plain">cargo fmt --check          # formatting gate
+cargo clippy --all-targets # lint gate (warnings = no)
+cargo test                 # unit + DPI vector tests
+
+# run it for real (capture needs privileges):
+cargo build --release
+sudo ./target/release/netwatch
+
+# Linux kernel-attribution build:
+cargo build --release --features ebpf</script></div>
+        <p class="cap">Tests include DPI byte-vectors + RFC&nbsp;8448 — add yours alongside.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 18 ─ recap -->
+  <section class="slide" data-title="Recap">
+    <div class="wrap">
+      <p class="kick">The whole map, once more</p>
+      <h2>What you just toured</h2>
+      <div class="grid2" style="margin-top:6px">
+        <div class="card"><h4>Spine</h4><p><code class="inl">main → run</code>: render → wait → handle. Input on its own thread; a tick fans out staggered refreshes.</p></div>
+        <div class="card"><h4>Collectors</h4><p>Background threads, single-flight guards, snapshots into one <code class="inl">App</code> behind <code class="inl">Arc&lt;Mutex&gt;</code>.</p></div>
+        <div class="card"><h4>Capture → DPI</h4><p>pcap → StreamTracker reassembly → <code class="inl">classify_once</code> (15 protocols) → bounded ring buffer.</p></div>
+        <div class="card"><h4>Decryption</h4><p>SSLKEYLOGFILE → HKDF → AEAD for TLS&nbsp;1.3 &amp; QUIC 1-RTT. Read-only, cooperating-client only.</p></div>
+        <div class="card"><h4>Attribution</h4><p>Lsof baseline + macOS PKTAP + Linux eBPF kprobe, merged onto every flow.</p></div>
+        <div class="card"><h4>Safety</h4><p>Landlock + cap-drop after setup. Flight recorder for incident bundles.</p></div>
+      </div>
+      <p class="lede" style="margin-top:22px">Start in <code class="inl">src/dpi/</code>, read <code class="inl">WIKI.md</code> for the maintained source map, and <code class="inl">cargo test</code> before you push.</p>
+      <p class="small muted" style="margin-top:10px">github.com/matthart1983/netwatch · press <kbd>o</kbd> to jump back to any section.</p>
+    </div>
+  </section>
+
+</main>
+
+<!-- Overview -->
+<div id="overview"><h3>Sections — click to jump</h3><div class="ovgrid" id="ovgrid"></div></div>
+
+<!-- Help -->
+<div id="help"><div class="box">
+  <h3>Navigation</h3>
+  <table>
+    <tr><td><kbd>→</kbd> <kbd>Space</kbd> <kbd>j</kbd> <kbd>l</kbd></td><td>next slide</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>k</kbd> <kbd>h</kbd></td><td>previous slide</td></tr>
+    <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>first / last</td></tr>
+    <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>jump to slide</td></tr>
+    <tr><td><kbd>o</kbd> / <kbd>Esc</kbd></td><td>section overview</td></tr>
+    <tr><td><kbd>f</kbd></td><td>toggle fullscreen</td></tr>
+    <tr><td><kbd>?</kbd></td><td>this help</td></tr>
+  </table>
+  <p class="esc">swipe on touch · click left / right edges · Esc to close</p>
+</div></div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ── Rust syntax highlighter (self-contained, no deps) ───────────────── */
+  var KW = new Set(("as async await break const continue crate dyn else enum extern "+
+    "false fn for if impl in let loop match mod move mut pub ref return self Self static "+
+    "struct super trait true type unsafe use where while").split(" "));
+  function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+  function highlight(code){
+    var out="",i=0,n=code.length;
+    var idA=function(c){return /[A-Za-z_]/.test(c);}, id=function(c){return /[A-Za-z0-9_]/.test(c);};
+    while(i<n){
+      var c=code[i];
+      if(c==="/"&&code[i+1]==="/"){var j=i;while(j<n&&code[j]!=="\n")j++;out+='<span class="c">'+esc(code.slice(i,j))+'</span>';i=j;continue;}
+      if(c==="/"&&code[i+1]==="*"){var j=i+2;while(j<n&&!(code[j]==="*"&&code[j+1]==="/"))j++;j=Math.min(n,j+2);out+='<span class="c">'+esc(code.slice(i,j))+'</span>';i=j;continue;}
+      if(c==='"'){var j=i+1;while(j<n){if(code[j]==="\\"){j+=2;continue;}if(code[j]==='"'){j++;break;}j++;}out+='<span class="s">'+esc(code.slice(i,j))+'</span>';i=j;continue;}
+      if(c==="'"){var m=code.slice(i).match(/^'[A-Za-z_][A-Za-z0-9_]*/);
+        if(m&&code[i+m[0].length]!=="'"){out+='<span class="lt">'+esc(m[0])+'</span>';i+=m[0].length;continue;}
+        var j=i+1;if(code[j]==="\\")j+=2;else j+=1;if(code[j]==="'")j++;out+='<span class="s">'+esc(code.slice(i,j))+'</span>';i=j;continue;}
+      if(/[0-9]/.test(c)){var j=i;while(j<n&&/[0-9a-fA-FxX_.]/.test(code[j]))j++;out+='<span class="n">'+esc(code.slice(i,j))+'</span>';i=j;continue;}
+      if(c==="#"&&code[i+1]==="["){var j=i+2,d=1;while(j<n&&d>0){if(code[j]==="[")d++;else if(code[j]==="]")d--;j++;}out+='<span class="attr">'+esc(code.slice(i,j))+'</span>';i=j;continue;}
+      if(idA(c)){var j=i;while(j<n&&id(code[j]))j++;var w=code.slice(i,j);
+        if(code[j]==="!"){out+='<span class="macro">'+esc(w)+'!</span>';i=j+1;continue;}
+        if(KW.has(w))out+='<span class="kw">'+esc(w)+'</span>';
+        else if(/^[A-Z]/.test(w))out+='<span class="ty">'+esc(w)+'</span>';
+        else if(code[j]==="(")out+='<span class="fn">'+esc(w)+'</span>';
+        else out+=esc(w);
+        i=j;continue;}
+      out+=esc(c);i++;
+    }
+    return out;
+  }
+  // Build highlighted <pre> from each raw <script type=text/plain>
+  document.querySelectorAll("[data-rust] > script").forEach(function(sc){
+    var raw=sc.textContent.replace(/^\n/,"").replace(/\s+$/,"");
+    var pre=document.createElement("pre");
+    var code=document.createElement("code");
+    code.className="rust";
+    code.innerHTML=highlight(raw);
+    pre.appendChild(code);
+    sc.parentNode.replaceChild(pre,sc);
+  });
+
+  /* ── Deck navigation ─────────────────────────────────────────────────── */
+  var slides=Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var cur=0, total=slides.length;
+  document.getElementById("ctot").textContent=total;
+
+  // Scale the slide's content so it always fits the viewport — no scroll,
+  // no clipping, at any window height. (The reveal.js approach.)
+  function fit(slide){
+    if(!slide) return;
+    var wrap=slide.querySelector(".wrap");
+    if(!wrap) return;
+    // Safe margins around the content (responsive horizontal gutter).
+    var marginV=40, marginH=Math.min(110, Math.max(22, slide.clientWidth*0.055));
+    var availW=slide.clientWidth-2*marginH, availH=slide.clientHeight-2*marginV;
+    if(availW<=0||availH<=0) return;
+    // Use available width (capped for readability), measure unscaled, then
+    // scale down by whichever axis is tightest.
+    wrap.style.width=Math.min(1100, availW)+"px";
+    wrap.style.transform="translate(-50%,-50%)";
+    var natH=wrap.scrollHeight, natW=wrap.scrollWidth;
+    if(!natH||!natW) return;
+    var s=Math.min(1, availW/natW, availH/natH);
+    wrap.style.transform="translate(-50%,-50%) scale("+s.toFixed(4)+")";
+  }
+  function fitActive(){ fit(slides[cur]); }
+
+  function render(i,dir){
+    i=Math.max(0,Math.min(total-1,i));
+    if(i===cur && slides[cur].classList.contains("active")) return;
+    var prev=slides[cur];
+    prev.classList.remove("active");
+    cur=i;
+    slides[cur].classList.add("active");
+    slides[cur].scrollTop=0;
+    document.getElementById("cnum").textContent=cur+1;
+    document.getElementById("progress").style.width=((cur)/(total-1)*100)+"%";
+    if(location.hash!=="#"+(cur+1)) history.replaceState(null,"","#"+(cur+1));
+    fit(slides[cur]);
+    requestAnimationFrame(function(){ fit(slides[cur]); });
+  }
+  function next(){render(cur+1);}
+  function prev(){render(cur-1);}
+
+  /* Overview grid */
+  var ovgrid=document.getElementById("ovgrid"), overview=document.getElementById("overview");
+  slides.forEach(function(s,idx){
+    var d=document.createElement("div");d.className="ov";
+    d.innerHTML='<span class="num">'+String(idx+1).padStart(2,"0")+'</span><span class="t">'+(s.dataset.title||("Slide "+(idx+1)))+'</span>';
+    d.addEventListener("click",function(){overview.classList.remove("open");render(idx);});
+    ovgrid.appendChild(d);
+  });
+  function toggleOverview(){overview.classList.toggle("open");}
+
+  var help=document.getElementById("help");
+  function toggleHelp(){help.classList.toggle("open");}
+
+  /* Keyboard */
+  document.addEventListener("keydown",function(e){
+    if(e.metaKey||e.ctrlKey||e.altKey) return;
+    var k=e.key;
+    if(help.classList.contains("open")){ if(k==="Escape"||k==="?"){toggleHelp();} return; }
+    if(overview.classList.contains("open")){ if(k==="Escape"||k==="o"){toggleOverview();} return; }
+    switch(k){
+      case "ArrowRight": case " ": case "j": case "l": case "PageDown": e.preventDefault(); next(); break;
+      case "ArrowLeft": case "k": case "h": case "PageUp": e.preventDefault(); prev(); break;
+      case "Home": render(0); break;
+      case "End": render(total-1); break;
+      case "o": case "O": toggleOverview(); break;
+      case "?": toggleHelp(); break;
+      case "f": case "F": if(!document.fullscreenElement){document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();}else{document.exitFullscreen&&document.exitFullscreen();} break;
+      case "Escape": break;
+      default:
+        if(/^[1-9]$/.test(k)) render(parseInt(k,10)-1);
+    }
+  });
+
+  /* Click zones (ignore links / interactive) */
+  document.getElementById("deck").addEventListener("click",function(e){
+    if(e.target.closest("a,button,input,pre,.code")) return;
+    var x=e.clientX, w=window.innerWidth;
+    if(x<w*0.32) prev(); else if(x>w*0.68) next();
+  });
+
+  /* Touch swipe */
+  var tx=0,ty=0;
+  document.addEventListener("touchstart",function(e){tx=e.changedTouches[0].clientX;ty=e.changedTouches[0].clientY;},{passive:true});
+  document.addEventListener("touchend",function(e){
+    var dx=e.changedTouches[0].clientX-tx, dy=e.changedTouches[0].clientY-ty;
+    if(Math.abs(dx)>60 && Math.abs(dx)>Math.abs(dy)){ dx<0?next():prev(); }
+  },{passive:true});
+
+  /* Deep-link via hash */
+  window.addEventListener("hashchange",function(){
+    var m=location.hash.match(/^#(\d+)$/); if(m) render(parseInt(m[1],10)-1);
+  });
+  // Re-fit on resize (debounced) and once fonts/layout settle after load.
+  var rt; window.addEventListener("resize",function(){ clearTimeout(rt); rt=setTimeout(fitActive,80); });
+  window.addEventListener("load",fitActive);
+  if(document.fonts&&document.fonts.ready){ document.fonts.ready.then(fitActive); }
+
+  var start=location.hash.match(/^#(\d+)$/);
+  render(start?parseInt(start[1],10)-1:0);
+})();
+</script>
+</body>
+</html>

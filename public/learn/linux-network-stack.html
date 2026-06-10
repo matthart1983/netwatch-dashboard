@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inside the Linux network stack</title>
+<style>
+  :root{
+    --crust:#11111b; --mantle:#181825; --base:#1e1e2e;
+    --surface0:#313244; --surface1:#45475a; --surface2:#585b70;
+    --overlay:#6c7086; --subtext:#a6adc8; --text:#cdd6f4;
+    --mauve:#cba6f7; --blue:#89b4fa; --sapphire:#74c7ec; --sky:#89dceb;
+    --green:#a6e3a1; --yellow:#f9e2af; --peach:#fab387; --red:#f38ba8;
+    --pink:#f5c2e7; --teal:#94e2d5; --lavender:#b4befe;
+    --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;background:
+      radial-gradient(1200px 800px at 82% -12%, #18242c 0%, transparent 60%),
+      radial-gradient(1000px 700px at -10% 110%, #161e2b 0%, transparent 55%),
+      var(--base);
+    color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden;}
+
+  #progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--sapphire),var(--blue),var(--teal));width:0;z-index:50;transition:width .25s ease}
+  #brand{position:fixed;top:14px;left:20px;z-index:40;font-family:var(--mono);font-size:13px;letter-spacing:.5px;color:var(--subtext)}
+  #brand b{color:var(--text)} #brand .dot{color:var(--sapphire)}
+  #act{position:fixed;top:14px;right:20px;z-index:40;font-family:var(--mono);font-size:12px;color:var(--overlay);letter-spacing:.12em;text-transform:uppercase}
+  #counter{position:fixed;bottom:14px;right:20px;z-index:40;font-family:var(--mono);font-size:13px;color:var(--overlay)} #counter b{color:var(--subtext)}
+  #hint{position:fixed;bottom:14px;left:20px;z-index:40;font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  kbd{font-family:var(--mono);background:var(--surface0);border:1px solid var(--surface1);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:.85em;color:var(--text)}
+
+  #deck{position:relative;height:100vh;width:100vw}
+  .slide{position:absolute;inset:0;display:none;overflow:hidden;opacity:0;transition:opacity .35s ease}
+  .slide.active{display:block;opacity:1}
+  .wrap{position:absolute;left:50%;top:50%;width:1140px;max-width:92vw;transform:translate(-50%,-50%);transform-origin:center center}
+
+  h1{font-size:clamp(34px,5.5vw,62px);line-height:1.04;margin:0 0 18px;letter-spacing:-.02em}
+  h1 .grad{background:linear-gradient(90deg,var(--sapphire),var(--blue),var(--teal));-webkit-background-clip:text;background-clip:text;color:transparent}
+  h2{font-size:clamp(23px,3.1vw,36px);margin:0 0 4px;letter-spacing:-.01em}
+  .kick{font-family:var(--mono);font-size:12.5px;text-transform:uppercase;letter-spacing:.22em;color:var(--sapphire);margin:0 0 9px}
+  .lede{font-size:clamp(16px,2vw,21px);color:var(--subtext);line-height:1.55;max-width:62ch}
+  p{line-height:1.6} .muted{color:var(--subtext)} .small{font-size:14px} b.hl{color:var(--text)}
+  ul.clean{list-style:none;padding:0;margin:14px 0 0}
+  ul.clean li{padding:7px 0 7px 26px;position:relative;color:var(--subtext);line-height:1.5}
+  ul.clean li::before{content:"▸";position:absolute;left:0;color:var(--sapphire)}
+  ul.clean li b{color:var(--text)}
+  code.inl{font-family:var(--mono);background:var(--surface0);border:1px solid var(--surface1);border-radius:6px;padding:1px 6px;font-size:.88em;color:var(--lavender)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--surface1);color:var(--subtext);margin:0 6px 6px 0;background:var(--mantle)}
+  .tag.k{color:var(--mauve);border-color:#3a2f50} .tag.g{color:var(--green);border-color:#2f4a36} .tag.b{color:var(--sapphire);border-color:#274a5c}
+  .cols{display:grid;grid-template-columns:1.05fr .95fr;gap:34px;align-items:start}
+  @media(max-width:880px){.cols{grid-template-columns:1fr;gap:20px}}
+
+  .code{position:relative;background:var(--crust);border:1px solid var(--surface0);border-radius:12px;overflow:hidden;box-shadow:0 18px 40px -24px #000}
+  .code .bar{display:flex;align-items:center;gap:7px;padding:9px 13px;background:var(--mantle);border-bottom:1px solid var(--surface0)}
+  .code .bar i{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .code .bar .r{background:#f38ba8}.code .bar .y{background:#f9e2af}.code .bar .g{background:#a6e3a1}
+  .code .bar span{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  pre{margin:0;padding:13px 16px;overflow:auto;font-family:var(--mono);font-size:clamp(11px,1.2vw,13px);line-height:1.55;tab-size:4}
+  pre code{white-space:pre}
+  .cap{font-family:var(--mono);font-size:11.5px;color:var(--overlay);margin:8px 2px 0}
+  .cmt{color:var(--overlay);font-style:italic} .str{color:var(--green)} .kw{color:var(--mauve)} .ty{color:var(--yellow)}
+  .num{color:var(--peach)} .pp{color:var(--peach)} .fnc{color:var(--blue)}
+
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:6px}
+  .card{background:var(--mantle);border:1px solid var(--surface0);border-radius:12px;padding:14px 16px}
+  .card h4{margin:0 0 6px;font-size:15px;color:var(--text)} .card h4 .loc{font-family:var(--mono);font-size:11px;color:var(--overlay);float:right;font-weight:400}
+  .card p{margin:0;font-size:13.5px;color:var(--subtext);line-height:1.5}
+  .flowv{display:flex;flex-direction:column;gap:0;align-items:center;font-family:var(--mono);margin-top:6px}
+  .flowv .node{min-width:min(560px,86vw);text-align:center;font-size:12.5px;background:var(--surface0);border:1px solid var(--surface1);border-radius:8px;padding:7px 10px;margin:5px 0;color:var(--text)}
+  .flowv .node.k{border-color:#3a2f50;color:var(--mauve)} .flowv .node.g{border-color:#2f4a36;color:var(--green)}
+  .flowv .node.b{border-color:#274a5c;color:var(--sapphire)} .flowv .node.p{border-color:#5c3a44;color:var(--pink)} .flowv .node.y{border-color:#5c512b;color:var(--yellow)}
+  .flowv .down{color:var(--overlay);font-size:18px;line-height:1}
+
+  .ix{background:var(--mantle);border:1px solid var(--surface0);border-radius:14px;padding:16px 18px;margin-top:10px}
+  .ix .ixhead{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+  .ix .ixhead .pill{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--sapphire);border:1px solid #274a5c;border-radius:999px;padding:2px 8px}
+  .ix .ixhead h4{margin:0;font-size:15px;color:var(--text);font-weight:600}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  .btn{font-family:var(--mono);font-size:12.5px;background:var(--surface0);color:var(--text);border:1px solid var(--surface1);border-bottom-width:2px;border-radius:8px;padding:6px 13px;cursor:pointer;transition:.12s;user-select:none}
+  .btn:hover{background:var(--surface1);border-color:var(--surface2)} .btn:active{transform:translateY(1px);border-bottom-width:1px}
+  .btn.primary{color:var(--sapphire);border-color:#274a5c;background:#16242c} .btn.primary:hover{background:#1b2c36}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .seg{display:flex;gap:6px;flex-wrap:wrap} .seg .btn.on{background:var(--sapphire);color:var(--crust);border-color:var(--sapphire)}
+
+  /* sk_buff visualizer */
+  .skbbar{display:flex;height:50px;border-radius:7px;overflow:hidden;border:1px solid var(--surface1);background:var(--crust);font-family:var(--mono)}
+  .skbbar .s{display:flex;align-items:center;justify-content:center;height:100%;font-size:10.5px;overflow:hidden;white-space:nowrap;transition:width .28s ease, background .2s;border-right:1px solid rgba(17,17,27,.6)}
+  .skbbar .s:last-child{border-right:0}
+  .skbbar .s.room{background:repeating-linear-gradient(45deg,#191926,#191926 5px,#15151f 5px,#15151f 10px);color:var(--overlay)}
+  .skbbar .s.pl{background:var(--green);color:var(--crust);font-weight:600}
+  .skbbar .s.h0{background:var(--peach);color:var(--crust);font-weight:600}
+  .skbbar .s.h1{background:var(--yellow);color:var(--crust);font-weight:600}
+  .skbbar .s.h2{background:var(--sapphire);color:var(--crust);font-weight:600}
+  .skbptrs{position:relative;height:18px;margin-top:3px;font-family:var(--mono);font-size:10px;color:var(--overlay)}
+  .skbptrs .pt{position:absolute;transform:translateX(-50%);white-space:nowrap}
+  .skbptrs .pt::before{content:"▲";display:block;text-align:center;color:var(--surface2);font-size:8px;line-height:1}
+  .skbstat{font-family:var(--mono);font-size:12px;color:var(--subtext);margin-top:12px;min-height:34px;line-height:1.5}
+  .skbstat b{color:var(--text)} .skbstat .warn{color:var(--red)}
+
+  /* end-to-end player (RX journey) */
+  .e2e{display:flex;flex-wrap:wrap;gap:0;align-items:stretch}
+  .e2e .est{flex:1 1 0;min-width:104px;border:1px solid var(--surface0);background:var(--mantle);border-radius:10px;padding:9px;opacity:.4;transition:.25s}
+  .e2e .est.lit{opacity:1;border-color:var(--sapphire);box-shadow:0 0 0 1px var(--sapphire)}
+  .e2e .est.done{opacity:.85;border-color:#2f4a36}
+  .e2e .est .ez{font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--overlay)}
+  .e2e .est .et{font-size:12px;color:var(--text);margin-top:4px;font-weight:600;line-height:1.2}
+  .e2e .econn{align-self:center;color:var(--overlay);font-size:14px;padding:0 2px}
+  .e2epay{margin-top:13px;background:var(--crust);border:1px solid var(--surface0);border-radius:10px;padding:12px 15px;font-family:var(--mono);font-size:12.5px;color:var(--subtext);min-height:56px;line-height:1.6}
+  .e2epay b{color:var(--text)} .e2epay .g{color:var(--green)} .e2epay .b{color:var(--sapphire)} .e2epay .y{color:var(--yellow)}
+
+  /* stepper (TCP states, later) */
+  .vfsteps{font-family:var(--mono);font-size:12px;border:1px solid var(--surface0);border-radius:9px;overflow:hidden}
+  .vfsteps .ln{padding:6px 11px;border-bottom:1px solid var(--mantle);color:var(--overlay);display:flex;gap:9px;transition:.12s;align-items:baseline}
+  .vfsteps .ln:last-child{border-bottom:0}
+  .vfsteps .ln.done{color:var(--subtext)} .vfsteps .ln.done .lx{color:var(--green)}
+  .vfsteps .ln.cur{background:#16242c;color:var(--text)}
+  .vfsteps .ln .lx{flex:0 0 90px;color:var(--sapphire)}
+  .vfsteps .ln .ld{color:var(--overlay);font-size:11px;margin-left:auto;text-align:right;max-width:52%}
+  .vfstate{margin-top:11px;font-family:var(--mono);font-size:12.5px}
+  .vfstate .vd{padding:6px 12px;border-radius:8px;line-height:1.4;display:inline-block}
+  .vfstate .vd.good{background:#16241a;border:1px solid #2f4a36;color:var(--green)}
+
+  /* scrubber/decoder (netfilter, later) */
+  .tlmarks{display:flex;justify-content:space-between;margin-top:8px;font-family:var(--mono);font-size:10px}
+  .tlmarks .tm{flex:1 1 0;text-align:center;color:var(--overlay);line-height:1.3;padding:0 2px;transition:.15s} .tlmarks .tm.on{color:var(--sapphire)}
+  .tlverdict{margin-top:14px;font-family:var(--mono);font-size:13px;padding:10px 14px;border-radius:9px;line-height:1.5}
+  .tlverdict.good{background:#16242c;border:1px solid #274a5c;color:var(--sapphire)}
+
+  /* decoder explain panel + TCP current-state badge */
+  .xpl{min-height:80px;font-size:13.5px;color:var(--subtext);line-height:1.55;border-left:2px solid var(--surface1);padding:2px 0 2px 12px;margin-top:12px}
+  .xpl b{color:var(--text)}
+  .tcpcur{font-family:var(--mono);font-size:14px;color:var(--overlay);margin-bottom:9px}
+  .tcpcur b{color:var(--sapphire);font-size:16px}
+
+  #overview{position:fixed;inset:0;z-index:60;background:rgba(17,17,27,.94);backdrop-filter:blur(6px);display:none;padding:54px clamp(20px,5vw,80px);overflow:auto}
+  #overview.open{display:block}
+  #overview h3{font-family:var(--mono);color:var(--subtext);font-weight:500;letter-spacing:.1em;text-transform:uppercase;font-size:13px;margin:0 0 18px}
+  .ovgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:11px}
+  .ov{background:var(--mantle);border:1px solid var(--surface0);border-radius:10px;padding:11px 13px;cursor:pointer;transition:.15s;display:flex;gap:10px;align-items:baseline}
+  .ov:hover{border-color:var(--sapphire);transform:translateY(-2px);background:var(--base)}
+  .ov .num{font-family:var(--mono);font-size:12px;color:var(--overlay)} .ov .t{font-size:13.5px;color:var(--text);line-height:1.3}
+  .ov .az{font-family:var(--mono);font-size:9px;color:var(--sapphire);letter-spacing:.1em;text-transform:uppercase;display:block;margin-top:3px}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div id="brand"><b>Linux network stack</b> <span class="muted">inner workings</span> <span class="dot">●</span></div>
+<div id="act"></div>
+<div id="hint"><kbd>←</kbd> <kbd>→</kbd> move · <kbd>O</kbd> overview · <kbd>F</kbd> fit</div>
+<div id="counter"><b id="cnum">01</b> / <span id="ctot">00</span></div>
+
+<main id="deck">
+
+  <!-- 1 ─ Title -->
+  <section class="slide" data-title="Title" data-act="Intro">
+    <div class="wrap">
+      <p class="kick">Where your packets actually go</p>
+      <h1>Inside the<br><span class="grad">Linux network stack</span>.</h1>
+      <p class="lede">From a frame landing in a NIC's ring buffer to <code class="inl">recv()</code> waking your
+        process — and all the way back out. We follow a packet through every layer, take apart the two structures the
+        whole stack is built on (<code class="inl">sk_buff</code> and <code class="inl">struct sock</code>), and mark
+        exactly where eBPF — including NetWatch's kprobe — taps in.</p>
+      <div style="margin-top:16px">
+        <span class="tag b">RX &amp; TX paths</span><span class="tag b">sk_buff</span><span class="tag b">struct sock</span>
+        <span class="tag k">NAPI &amp; softirqs</span><span class="tag k">netfilter</span><span class="tag g">TCP state machine</span>
+        <span class="tag g">XDP · tc · kprobes</span>
+      </div>
+      <p class="small muted" style="margin-top:18px">Five acts · ~21 stops · drive the sk_buff pointers, follow a packet
+        up the stack, step the TCP handshake, traverse the netfilter hooks.</p>
+    </div>
+  </section>
+
+  <!-- 2 ─ The journey / map -->
+  <section class="slide" data-title="The journey" data-act="I · The map">
+    <div class="wrap">
+      <p class="kick">One packet, many layers</p>
+      <h2>The stack is a pipeline you can name end to end</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Every received packet climbs the same ladder; every sent one descends it. Each rung is a real
+            subsystem with real entry points — and a place where you can observe or intercept.</p>
+          <ul class="clean">
+            <li><b>Driver / NAPI</b> — DMA, interrupts, polling. <span class="muted">XDP hooks here, pre-skb.</span></li>
+            <li><b>Link → IP</b> — <code class="inl">netif_receive_skb</code> → <code class="inl">ip_rcv</code>.
+              <span class="muted">tc-BPF &amp; netfilter hook here.</span></li>
+            <li><b>Transport</b> — <code class="inl">tcp_v4_rcv</code> / <code class="inl">udp_rcv</code>, socket
+              lookup. <span class="muted">kprobes (NetWatch) hook here.</span></li>
+            <li><b>Socket → app</b> — receive queue, <code class="inl">recv()</code> wakes.</li>
+          </ul>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node">application — recv() / send()</div><div class="down">↕ socket layer</div>
+            <div class="node b">TCP / UDP — tcp_v4_rcv · tcp_sendmsg</div><div class="down">↕</div>
+            <div class="node y">IP — ip_rcv · ip_queue_xmit</div><div class="down">↕ netfilter · tc</div>
+            <div class="node">link / driver — netif_receive_skb · ndo_start_xmit</div><div class="down">↕ NAPI · XDP</div>
+            <div class="node g">NIC — DMA ring buffers, IRQ</div>
+          </div>
+          <p class="cap">Same ladder both ways. Learn the RX climb (Act II) and the TX descent (Act III) is its mirror.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 ─ The two nouns -->
+  <section class="slide" data-title="The two structures" data-act="I · The map">
+    <div class="wrap">
+      <p class="kick">Learn these two and everything else is verbs on them</p>
+      <h2><code class="inl">sk_buff</code> carries the packet; <code class="inl">struct sock</code> is the connection</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Almost every function in the stack takes an <code class="inl">skb</code>, a
+            <code class="inl">sock</code>, or both. The <code class="inl">skb</code> is one packet in flight; the
+            <code class="inl">sock</code> is the kernel side of a socket.</p>
+          <ul class="clean">
+            <li><b><code class="inl">sk_buff</code></b> — a packet plus metadata. Passed <i>by pointer</i> up and down;
+              headers are added/stripped by sliding pointers, not copying (Act II).</li>
+            <li><b><code class="inl">struct sock</code></b> — receive/send queues, connection state, the 4-tuple. Its
+              <code class="inl">sock_common</code> head holds <code class="inl">skc_daddr</code> /
+              <code class="inl">skc_dport</code> — the very fields NetWatch's kprobe reads.</li>
+          </ul>
+          <p class="small muted">Everything below is how these two move through the layers.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>include/linux/skbuff.h (simplified)</span></div><div data-c><script type="text/plain">struct sk_buff {
+    struct sk_buff   *next, *prev;  /* queue links     */
+    struct sock      *sk;           /* owning socket   */
+    struct net_device *dev;         /* in/out device   */
+    char              cb[48];       /* per-layer scratch */
+    unsigned int      len, data_len;/* total / paged   */
+    __u16  transport_header, network_header, mac_header;
+    /* the buffer: headers grow DOWN from data, payload
+       grows UP toward end. */
+    unsigned char    *head, *data, *tail, *end;
+    refcount_t        users;        /* shared refcount */
+};</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 ─ NIC → IRQ → NAPI -->
+  <section class="slide" data-title="NIC, IRQ, NAPI" data-act="II · The receive path">
+    <div class="wrap">
+      <p class="kick">From wire to softirq</p>
+      <h2>Interrupts get you in the door; NAPI keeps the door from jamming</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">At line rate, one interrupt per packet would melt the CPU. The kernel takes one interrupt,
+            then switches to <b class="hl">polling</b> under load — that's NAPI.</p>
+          <ul class="clean">
+            <li><b>DMA + IRQ.</b> The NIC copies the frame into an RX ring in memory, then raises an interrupt.</li>
+            <li><b>Top half (tiny).</b> The IRQ handler masks further RX interrupts and calls
+              <code class="inl">napi_schedule()</code> — raising <code class="inl">NET_RX_SOFTIRQ</code>.</li>
+            <li><b>NAPI poll.</b> <code class="inl">net_rx_action</code> runs the driver's
+              <code class="inl">poll()</code>, draining up to a <b>budget</b> (64) of packets, then re-enables IRQs.</li>
+            <li><b>ksoftirqd.</b> If softirqs flood, they're handed to a per-CPU kernel thread so userspace isn't
+              starved.</li>
+          </ul>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node g">NIC: DMA frame → RX ring · raise IRQ</div><div class="down">↓ hardirq (top half)</div>
+            <div class="node">mask IRQ · napi_schedule() · raise NET_RX_SOFTIRQ</div><div class="down">↓ softirq</div>
+            <div class="node b">net_rx_action → driver poll() · budget = 64</div><div class="down">↓ per packet</div>
+            <div class="node y">napi_gro_receive → up the stack</div>
+          </div>
+          <p class="cap">This split — fast hardirq, deferred softirq, polled under load — is why Linux can saturate a
+            10/40/100G link without livelock.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 ─ sk_buff anatomy (INTERACTIVE) -->
+  <section class="slide" data-title="sk_buff anatomy" data-act="II · The receive path">
+    <div class="wrap">
+      <p class="kick">Headers without copying — just move pointers</p>
+      <h2>Drive the four pointers: head · data · tail · end</h2>
+      <p class="lede" style="max-width:84ch">An <code class="inl">skb</code> wraps one buffer with four pointers.
+        Adding a header (<code class="inl">skb_push</code>) slides <code class="inl">data</code> <i>left</i> into the
+        headroom; stripping one (<code class="inl">skb_pull</code>) slides it <i>right</i>. No payload is ever copied.
+        Build a packet TX-style, then strip it RX-style.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4>one buffer, sliding pointers</h4></div>
+        <div class="skbbar" id="skbBar"></div>
+        <div class="skbptrs" id="skbPtrs"></div>
+        <div class="skbstat" id="skbStat"></div>
+        <div class="controls">
+          <button class="btn" id="skbReserve">skb_reserve(64)</button>
+          <button class="btn primary" id="skbPut">skb_put(+payload)</button>
+          <button class="btn" id="skbPushTcp">push TCP hdr</button>
+          <button class="btn" id="skbPushIp">push IP hdr</button>
+          <button class="btn" id="skbPushEth">push Eth hdr</button>
+          <button class="btn" id="skbPull">skb_pull (strip outer)</button>
+          <button class="btn" id="skbReset">Reset</button>
+        </div>
+      </div>
+      <p class="cap"><b>headroom</b> = <code class="inl">data − head</code>; <b>tailroom</b> = <code class="inl">end − tail</code>.
+        Drivers reserve headroom up front so every layer can prepend its header by just moving a pointer.</p>
+    </div>
+  </section>
+
+  <!-- 6 ─ RX journey (INTERACTIVE PLAYER) -->
+  <section class="slide" data-title="The RX journey" data-act="II · The receive path">
+    <div class="wrap">
+      <p class="kick">One packet, all the way up</p>
+      <h2>From DMA to <code class="inl">recv()</code> — step it</h2>
+      <p class="lede" style="max-width:82ch">Follow a single TCP segment from the wire to the application. Each step is a
+        real kernel entry point; the data structure it touches is named as it goes.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4>inbound: 142.250.72.4:443 → :52344</h4></div>
+        <div class="e2e" id="e2e"></div>
+        <div class="e2epay" id="e2ePay"></div>
+        <div class="controls">
+          <button class="btn primary" id="e2ePlay">▶ Play</button>
+          <button class="btn" id="e2eStep">Step</button>
+          <button class="btn" id="e2eReset">Reset</button>
+          <span class="small muted" id="e2eNote" style="margin-left:6px"></span>
+        </div>
+      </div>
+      <p class="cap">The TX path (Act III) is this exact ladder in reverse: <code class="inl">tcp_sendmsg</code> →
+        <code class="inl">ip_queue_xmit</code> → qdisc → <code class="inl">ndo_start_xmit</code> → DMA out.</p>
+    </div>
+  </section>
+
+  <!-- 7 ─ Protocol dispatch & socket lookup -->
+  <section class="slide" data-title="Dispatch &amp; socket lookup" data-act="II · The receive path">
+    <div class="wrap">
+      <p class="kick">How the stack decides where a packet goes</p>
+      <h2>Two demuxes and a hash table</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Climbing the stack is a sequence of "which handler owns this?" decisions, each a fast lookup.</p>
+          <ul class="clean">
+            <li><b>L2 → L3 by EtherType.</b> <code class="inl">__netif_receive_skb_core</code> dispatches on
+              <code class="inl">skb-&gt;protocol</code> (0x0800 → <code class="inl">ip_rcv</code>) via the registered
+              <code class="inl">packet_type</code> list.</li>
+            <li><b>L3 → L4 by protocol number.</b> The IP header's protocol field (6 → TCP) selects
+              <code class="inl">tcp_v4_rcv</code>.</li>
+            <li><b>L4 → socket by 4-tuple.</b> <code class="inl">__inet_lookup</code> hashes
+              <code class="inl">(saddr, sport, daddr, dport)</code> into the <b>established</b> table; misses fall to the
+              <b>listen</b> table (a new connection).</li>
+          </ul>
+          <p class="small muted">That established hash is the hot path — every packet of every connection hits it.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>net/ipv4/tcp_ipv4.c (sketch)</span></div><div data-c><script type="text/plain">int tcp_v4_rcv(struct sk_buff *skb)
+{
+    /* hash the 4-tuple into the established table;
+       fall back to the listen table for a new SYN. */
+    sk = __inet_lookup_skb(&tcp_hashinfo, skb,
+                           th->source, th->dest);
+    if (!sk)
+        goto no_socket;        /* → RST or drop  */
+
+    /* found the owning connection: run the state
+       machine and queue data for the app. */
+    return tcp_v4_do_rcv(sk, skb);
+}</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 ─ TX path -->
+  <section class="slide" data-title="The transmit path" data-act="III · Transmit &amp; TCP">
+    <div class="wrap">
+      <p class="kick">The same ladder, descending</p>
+      <h2>From <code class="inl">send()</code> down to the wire</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Sending mirrors receiving. Your bytes are copied into <code class="inl">skb</code>s, headers
+            are <i>pushed</i> on at each layer, and the packet is handed to the driver — gated by congestion control and
+            queueing on the way.</p>
+          <ul class="clean">
+            <li><b><code class="inl">tcp_sendmsg</code></b> copies user data into skbs on the
+              <code class="inl">sk_write_queue</code>.</li>
+            <li><b><code class="inl">tcp_write_xmit</code></b> sends only what the <b>congestion window</b>
+              (<code class="inl">cwnd</code>) allows — TCP's flow/congestion control lives here.</li>
+            <li><b><code class="inl">ip_queue_xmit</code></b> adds the IP header, routes, runs
+              <code class="inl">LOCAL_OUT</code> + <code class="inl">POSTROUTING</code>, resolves the next hop (ARP).</li>
+            <li><b><code class="inl">dev_queue_xmit</code></b> hands off to the <b>qdisc</b>, which schedules the actual
+              <code class="inl">ndo_start_xmit</code> into the NIC.</li>
+          </ul>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node">send() → <b>tcp_sendmsg</b> → sk_write_queue</div><div class="down">↓ cwnd gate</div>
+            <div class="node b">tcp_write_xmit → tcp_transmit_skb (TCP hdr)</div><div class="down">↓</div>
+            <div class="node y">ip_queue_xmit → LOCAL_OUT · POSTROUTING · ARP</div><div class="down">↓</div>
+            <div class="node">dev_queue_xmit → <b>qdisc</b> → ndo_start_xmit</div><div class="down">↓ DMA</div>
+            <div class="node g">NIC → wire</div>
+          </div>
+          <p class="cap">Two gates the RX path doesn't have: <b>congestion control</b> (how much TCP may send) and the
+            <b>qdisc</b> (when the link actually accepts it). Act IV opens the qdisc.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 ─ struct sock & hashes -->
+  <section class="slide" data-title="struct sock &amp; the hashes" data-act="III · Transmit &amp; TCP">
+    <div class="wrap">
+      <p class="kick">The connection, and how the kernel finds it</p>
+      <h2>Every packet is matched to a <code class="inl">struct sock</code> by its 4-tuple</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A <code class="inl">struct sock</code> is the kernel half of a socket: its queues, its state,
+            its identity. The stack finds the right one with two hash tables.</p>
+          <ul class="clean">
+            <li><b>Established hash (<code class="inl">ehash</code>)</b> — keyed on the full 4-tuple
+              <code class="inl">(saddr, sport, daddr, dport)</code>. The hot path: every data packet looks up here.</li>
+            <li><b>Listen hash</b> — keyed on local port; a SYN that misses <code class="inl">ehash</code> matches a
+              listener and starts a new connection.</li>
+            <li><b><code class="inl">sock_common</code></b> is the head: <code class="inl">skc_daddr</code>,
+              <code class="inl">skc_dport</code>, <code class="inl">skc_state</code>. The exact fields NetWatch's kprobe
+              reads.</li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>include/net/sock.h (simplified)</span></div><div data-c><script type="text/plain">struct sock_common {        /* head of struct sock */
+    __be32  skc_daddr;      /* 0x00 foreign address */
+    __be32  skc_rcv_saddr;  /* 0x04 bound local     */
+    __be16  skc_dport;      /* 0x0C foreign port    */
+    __u16   skc_num;        /*      local port      */
+    unsigned char skc_state;/* TCP_ESTABLISHED ...  */
+};
+/* NetWatch reads skc_daddr / skc_dport here — but at
+ * tcp_v4_connect ENTRY they are still zero (issue #38),
+ * so it reads the destination from the syscall uaddr. */</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10 ─ TCP state machine (INTERACTIVE STEPPER) -->
+  <section class="slide" data-title="The TCP state machine" data-act="III · Transmit &amp; TCP">
+    <div class="wrap">
+      <p class="kick">A connection is a walk through states</p>
+      <h2>Step the handshake — and the teardown</h2>
+      <p class="lede" style="max-width:82ch"><code class="inl">skc_state</code> moves through a fixed state machine,
+        driven by segments arriving and the app calling <code class="inl">connect</code>/<code class="inl">close</code>.
+        Pick a scenario and step it; the current state is what <code class="inl">ss</code> and NetWatch report.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4>TCP state transitions</h4></div>
+        <div class="seg" id="tcMode" style="margin-bottom:10px">
+          <button class="btn on" data-m="aopen">active open (connect)</button>
+          <button class="btn" data-m="popen">passive open (accept)</button>
+          <button class="btn" data-m="aclose">active close</button>
+          <button class="btn" data-m="pclose">passive close</button>
+        </div>
+        <div class="tcpcur" id="tcCur">state: <b>CLOSED</b></div>
+        <div class="vfsteps" id="tcSteps"></div>
+        <div class="vfstate" id="tcState"></div>
+        <div class="controls">
+          <button class="btn primary" id="tcStep">Step ▸</button>
+          <button class="btn" id="tcRun">Run ▶</button>
+          <button class="btn" id="tcReset">Reset</button>
+        </div>
+      </div>
+      <p class="cap"><code class="inl">TIME_WAIT</code> (2×MSL) is the famous one — the active closer lingers so a
+        stray retransmitted FIN can't corrupt a new connection on the same tuple.</p>
+    </div>
+  </section>
+
+  <!-- 11 ─ netfilter (INTERACTIVE DECODER) -->
+  <section class="slide" data-title="netfilter's five hooks" data-act="IV · Control points">
+    <div class="wrap">
+      <p class="kick">Where firewalling and NAT actually happen</p>
+      <h2>Five hooks, one routing decision</h2>
+      <p class="lede" style="max-width:82ch">netfilter places five hook points along the IP path; iptables/nftables rules
+        and conntrack/NAT run at them. Whether a packet sees <code class="inl">LOCAL_IN</code> or
+        <code class="inl">FORWARD</code> depends on the routing decision in the middle. Click each.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">explore</span><h4>inbound → … → outbound</h4></div>
+        <div class="seg" id="nfPick"></div>
+        <div class="xpl" id="nfExplain">Click a hook to see what runs there.</div>
+      </div>
+      <p class="cap">Each hook returns a verdict: <code class="inl">ACCEPT</code> · <code class="inl">DROP</code> ·
+        <code class="inl">QUEUE</code> (to userspace) · <code class="inl">STOLEN</code> · <code class="inl">REPEAT</code>.
+        This is exactly the machinery pfSense/OPNsense drive — at the <i>perimeter</i>, blind to the per-process view a
+        host tool has.</p>
+    </div>
+  </section>
+
+  <!-- 12 ─ qdisc -->
+  <section class="slide" data-title="Traffic control" data-act="IV · Control points">
+    <div class="wrap">
+      <p class="kick">The egress gatekeeper</p>
+      <h2>qdiscs decide <i>when</i> a packet leaves</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Between <code class="inl">dev_queue_xmit</code> and the driver sits the <b class="hl">queueing
+            discipline</b> — the kernel's traffic scheduler. Every device has a root qdisc.</p>
+          <ul class="clean">
+            <li><b>Classless</b> (<code class="inl">fq_codel</code>, the modern default) — fair queueing plus active
+              queue management to fight <b>bufferbloat</b>.</li>
+            <li><b>Classful</b> (<code class="inl">HTB</code>) — hierarchical bandwidth shaping: rate limits, borrowing,
+              priorities.</li>
+            <li><b>enqueue / dequeue.</b> Packets are enqueued; the qdisc chooses dequeue order, then
+              <code class="inl">sch_direct_xmit</code> pushes to the NIC.</li>
+            <li><b>tc-BPF egress</b> and <b>BQL</b> (byte queue limits) hook here too.</li>
+          </ul>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node">dev_queue_xmit → <b>enqueue</b> on root qdisc</div><div class="down">↓ scheduler picks</div>
+            <div class="node y">fq_codel / HTB — shape, prioritize, drop early</div><div class="down">↓ dequeue</div>
+            <div class="node b">sch_direct_xmit → ndo_start_xmit</div><div class="down">↓</div>
+            <div class="node g">NIC TX ring</div>
+          </div>
+          <p class="cap">This is where shaping, prioritization, and AQM live — and where a misconfigured queue adds the
+            latency users feel as "lag."</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13 ─ conntrack & NAT -->
+  <section class="slide" data-title="Conntrack &amp; NAT" data-act="IV · Control points">
+    <div class="wrap">
+      <p class="kick">Stateful, because the kernel remembers flows</p>
+      <h2>Connection tracking turns a packet filter into a firewall</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Raw netfilter sees packets; <b class="hl">conntrack</b> sees <i>flows</i>. It records each
+            connection's tuple and state, which is what makes stateful firewalling and NAT possible.</p>
+          <ul class="clean">
+            <li><b>State.</b> Every flow is <code class="inl">NEW</code>, <code class="inl">ESTABLISHED</code>,
+              <code class="inl">RELATED</code>, or <code class="inl">INVALID</code> — so "allow replies to connections I
+              started" becomes one rule.</li>
+            <li><b>NAT.</b> Rewriting addresses/ports: <b>DNAT</b> at <code class="inl">PREROUTING</code> (port
+              forwarding), <b>SNAT/masquerade</b> at <code class="inl">POSTROUTING</code> (sharing one public IP).</li>
+            <li><b>The cost.</b> Per-flow state in the conntrack table — finite, and a real tuning knob on busy
+              gateways.</li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>the stateful-firewall one-liner</span></div><div data-c><script type="text/plain">/* nftables: the rule conntrack makes possible */
+//   ct state established,related accept
+//   ct state invalid drop
+//   tcp dport 22 ct state new accept
+//
+// Without conntrack you'd have to match reply packets
+// by hand. With it, the kernel remembers every flow's
+// state and you reason in terms of CONNECTIONS, not
+// individual packets.</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 14 ─ eBPF taps (INTERACTIVE DECODER) -->
+  <section class="slide" data-title="Where eBPF taps in" data-act="IV · Control points">
+    <div class="wrap">
+      <p class="kick">Your code, at the layer that matters</p>
+      <h2>Six places to attach a program — pick the one that sees your event</h2>
+      <p class="lede" style="max-width:82ch">Every layer this deck walked is also an eBPF attach point. The earlier you
+        hook, the faster and rawer; the later, the more context. Click each to see what it sees — and where NetWatch
+        sits.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">explore</span><h4>driver → … → socket</h4></div>
+        <div class="seg" id="ebPick"></div>
+        <div class="xpl" id="ebExplain">Click a tap point to see what it can observe or change.</div>
+      </div>
+      <p class="cap">NetWatch uses a <b>kprobe on <code class="inl">tcp_v4_connect</code></b> — late enough to know the
+        process and destination, early enough to catch the connection's birth. Phase 2 adds more (Act V).</p>
+    </div>
+  </section>
+
+  <!-- 15 ─ sk_buff memory & offloads -->
+  <section class="slide" data-title="skb memory &amp; offloads" data-act="V · Depth &amp; path">
+    <div class="wrap">
+      <p class="kick">Why the stack barely copies anything</p>
+      <h2>Shared buffers, paged data, and one big skb for many packets</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Performance comes from <i>not copying</i>. An <code class="inl">skb</code>'s payload can live in
+            unmapped pages, be shared by reference, and represent many packets at once.</p>
+          <ul class="clean">
+            <li><b>Linear + paged.</b> A small linear part plus <code class="inl">frags[]</code> pointing at page-cache
+              pages — that's how <code class="inl">sendfile</code> ships a file without copying it.</li>
+            <li><b><code class="inl">skb_clone</code> vs <code class="inl">skb_copy</code>.</b> Clone shares the data
+              buffer (bump <code class="inl">dataref</code>), new skb head only; copy is a true deep copy.</li>
+            <li><b>GRO (RX) / GSO·TSO (TX).</b> Coalesce many segments into one big skb going up; keep one big skb going
+              down and segment at the very last step (the NIC, ideally). Per-packet cost amortized away.</li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>skb_shared_info — at skb->end</span></div><div data-c><script type="text/plain">struct skb_shared_info {
+    __u8       nr_frags;      /* paged page count   */
+    __u16      gso_size;      /* GSO segment size   */
+    __u16      gso_segs;      /* segments this skb  */
+    atomic_t   dataref;       /* buffer share count */
+    skb_frag_t frags[MAX_SKB_FRAGS];  /* the pages  */
+};
+/* skb->users  = refs to the skb struct
+ * dataref     = refs to the underlying data buffer
+ * clone bumps dataref; the buffer frees at zero. */</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 16 ─ Network namespaces -->
+  <section class="slide" data-title="Network namespaces" data-act="V · Depth &amp; path">
+    <div class="wrap">
+      <p class="kick">How one kernel runs many isolated stacks</p>
+      <h2><code class="inl">struct net</code> — a whole network stack, instanced</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A <b class="hl">network namespace</b> is an independent copy of the entire stack: its own
+            interfaces, routing tables, conntrack, port space, and <code class="inl">/proc/net</code>. The whole
+            networking code is namespace-aware — functions carry or derive a <code class="inl">struct net</code>.</p>
+          <ul class="clean">
+            <li><b>Containers are netns.</b> Each Docker/Kubernetes pod gets its own — that's why two containers can both
+              bind port 80.</li>
+            <li><b><code class="inl">veth</code> pairs</b> are virtual cables stitching namespaces together, usually via
+              a bridge or to the host.</li>
+            <li>Same kernel, same code paths — just keyed by which <code class="inl">net</code> the packet belongs to.</li>
+          </ul>
+          <p class="small muted">This is the substrate under all of container networking — and a thing NetWatch must
+            reason about when attributing flows on a containerized host.</p>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node g">struct net (host)</div><div class="down">veth ↕</div>
+            <div class="node b">struct net (container A) — own ports, routes, iface</div><div class="down"></div>
+            <div class="node b">struct net (container B) — own ports, routes, iface</div>
+          </div>
+          <p class="cap">One kernel, many parallel stacks. The 4-tuple that identifies a socket is only unique
+            <i>within</i> a namespace.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 17 ─ Where the cost hides -->
+  <section class="slide" data-title="Where the cost hides" data-act="V · Depth &amp; path">
+    <div class="wrap">
+      <p class="kick">Reading the stack for performance</p>
+      <h2>The handful of places latency and CPU actually go</h2>
+      <div class="grid2">
+        <div class="card"><h4>The user⇄kernel copy</h4><p><code class="inl">sendmsg</code>/<code class="inl">recvmsg</code>
+          copy data across the boundary. Zero-copy paths — <code class="inl">sendfile</code>,
+          <code class="inl">MSG_ZEROCOPY</code>, <code class="inl">io_uring</code> — exist precisely to dodge it.</p></div>
+        <div class="card"><h4>The established-hash lookup</h4><p>Every single packet of every connection hashes its
+          4-tuple into <code class="inl">ehash</code>. It's fast, but it's per-packet and on the hottest path.</p></div>
+        <div class="card"><h4>Softirq budget &amp; RSS/RPS</h4><p>RX work runs in softirq on the CPU that took the IRQ.
+          <b>RSS</b> (hardware) and <b>RPS</b> (software) spread flows across cores so one CPU isn't the bottleneck.</p></div>
+        <div class="card"><h4>GRO / GSO amortization</h4><p>Coalescing turns N trips up/down the stack into one. Disable
+          it and per-packet overhead dominates at high rates.</p></div>
+        <div class="card"><h4>Bufferbloat / AQM</h4><p>Oversized queues add latency under load. <code class="inl">fq_codel</code>
+          and friends drop early to keep queues — and lag — short.</p></div>
+        <div class="card"><h4>Cache locality</h4><p>Per-CPU structures and careful <code class="inl">skb</code> field
+          layout exist so the hot path touches as few cache lines as possible.</p></div>
+      </div>
+      <p class="cap">When a network "feels slow," it's usually one of these — and each is observable with the very tools
+        (ftrace, perf, eBPF) hooked at the layers this deck walked.</p>
+    </div>
+  </section>
+
+  <!-- 18 ─ Reading the source + Phase 2 -->
+  <section class="slide" data-title="Reading the source" data-act="V · Depth &amp; path">
+    <div class="wrap">
+      <p class="kick">Where to look — and your own way in</p>
+      <h2>The map, in real files — and NetWatch's Phase-2 hooks on it</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">The whole deck lives in a handful of directories. Open these alongside it:</p>
+          <ul class="clean">
+            <li><code class="inl">include/linux/skbuff.h</code> · <code class="inl">include/net/sock.h</code> — the two
+              structures.</li>
+            <li><code class="inl">net/core/dev.c</code> — NAPI, <code class="inl">netif_receive_skb</code>,
+              <code class="inl">dev_queue_xmit</code>.</li>
+            <li><code class="inl">net/ipv4/{ip_input,ip_output,tcp_input,tcp_output,tcp_ipv4}.c</code> — IP &amp; TCP.</li>
+            <li><code class="inl">net/netfilter/</code> · <code class="inl">net/sched/</code> — hooks &amp; qdiscs.</li>
+          </ul>
+        </div>
+        <div>
+          <p class="lede small">NetWatch's eBPF Phase 2 is three new taps — each lands at a layer you now know:</p>
+          <div class="flowv" style="margin-top:6px">
+            <div class="node b">tcp_v6_connect — net/ipv6/tcp_ipv6.c <span style="color:var(--overlay)">(IPv6 connect)</span></div><div class="down"></div>
+            <div class="node y">udp_sendmsg — net/ipv4/udp.c <span style="color:var(--overlay)">(QUIC/UDP attribution)</span></div><div class="down"></div>
+            <div class="node p">inet_sock_set_state <span style="color:var(--overlay)">(catch short-lived flows by state change)</span></div>
+          </div>
+          <p class="cap">Each is the same question this deck answered: which function sees the event, what's populated
+            when it fires, what's the stable key. Adding one is a real first patch.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 19 ─ Recap -->
+  <section class="slide" data-title="What you just toured" data-act="Recap">
+    <div class="wrap">
+      <p class="kick">The whole map, once more</p>
+      <h2>From a NIC's ring buffer to <code class="inl">recv()</code> — and back</h2>
+      <div class="grid2">
+        <div class="card"><h4>The map <span class="loc">Act I</span></h4><p>A layered ladder, climbed by RX and
+          descended by TX, built on two structures: <code class="inl">sk_buff</code> (the packet) and
+          <code class="inl">struct sock</code> (the connection).</p></div>
+        <div class="card"><h4>Receive <span class="loc">Act II</span></h4><p>NIC → IRQ → NAPI poll → skb → GRO →
+          <code class="inl">ip_rcv</code> → <code class="inl">tcp_v4_rcv</code> → socket lookup → wake
+          <code class="inl">recv()</code>. Headers move by sliding pointers, never copying.</p></div>
+        <div class="card"><h4>Transmit &amp; TCP <span class="loc">Act III</span></h4><p><code class="inl">tcp_sendmsg</code>
+          → cwnd → IP → qdisc → driver; and the TCP state machine from <code class="inl">SYN_SENT</code> to
+          <code class="inl">TIME_WAIT</code>.</p></div>
+        <div class="card"><h4>Control points <span class="loc">Act IV</span></h4><p>netfilter's five hooks, conntrack/NAT,
+          qdiscs, and the six eBPF tap points — XDP to cgroup — that observe or change each layer.</p></div>
+        <div class="card"><h4>Depth <span class="loc">Act V</span></h4><p>Shared/paged skbs and GRO/GSO; namespaces as
+          parallel stacks; where the CPU and latency really go.</p></div>
+        <div class="card"><h4>Your way in</h4><p>Open <code class="inl">net/core/dev.c</code> and follow one packet.
+          Then add a NetWatch Phase-2 hook — and you're reading the stack like a contributor.</p></div>
+      </div>
+      <p class="cap" style="margin-top:14px">Press <kbd>O</kbd> for the full map · <kbd>←</kbd> to revisit any
+        simulation. The stack is big, but it's just this ladder, walked carefully.</p>
+    </div>
+  </section>
+
+</main>
+
+<div id="overview"><h3>Jump to a stop — <span class="muted">click any, or press O to close</span></h3><div class="ovgrid" id="ovgrid"></div></div>
+
+<script>
+/* ── safe single-pass C highlighter (escapes as it goes) ─────────────────── */
+var KW={struct:1,union:1,'enum':1,typedef:1,'static':1,'const':1,'void':1,'int':1,'char':1,'short':1,'long':1,
+  unsigned:1,signed:1,'return':1,'if':1,'else':1,'for':1,'while':1,'do':1,'switch':1,'case':1,'break':1,
+  'continue':1,'goto':1,sizeof:1,inline:1,'extern':1,'volatile':1,bool:1};
+var TY={sk_buff:1,sock:1,sock_common:1,net_device:1,napi_struct:1,tcp_sock:1,udp_sock:1,net:1,Qdisc:1,
+  sk_buff_head:1,packet_type:1,tcphdr:1,iphdr:1,u8:1,u16:1,u32:1,u64:1,s32:1,__u8:1,__u16:1,__u32:1,
+  __be16:1,__be32:1,__be64:1,size_t:1,atomic_t:1,refcount_t:1,spinlock_t:1};
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function span(c,s){return '<span class="'+c+'">'+esc(s)+'</span>';}
+function hlC(src){
+  var out='',i=0,n=src.length,bol=true;
+  while(i<n){
+    var c=src[i];
+    if(c==='\n'){out+='\n';i++;bol=true;continue;}
+    if(c==='/'&&src[i+1]==='/'){ var j=src.indexOf('\n',i); if(j<0)j=n; out+=span('cmt',src.slice(i,j)); i=j; continue; }
+    if(c==='/'&&src[i+1]==='*'){ var j0=src.indexOf('*/',i); j0=j0<0?n:j0+2; out+=span('cmt',src.slice(i,j0)); i=j0; continue; }
+    if(c==='#'&&bol){ var j1=src.indexOf('\n',i); if(j1<0)j1=n; out+=span('pp',src.slice(i,j1)); i=j1; continue; }
+    if(c==='"'){ var j2=i+1; while(j2<n&&src[j2]!=='"'){ if(src[j2]==='\\')j2++; j2++; } if(src[j2]==='"')j2++; out+=span('str',src.slice(i,j2)); i=j2; continue; }
+    if(c==="'"){ var j3=i+1; while(j3<n&&src[j3]!=="'"&&src[j3]!=='\n'){ if(src[j3]==='\\')j3++; j3++; } if(src[j3]==="'")j3++; out+=span('str',src.slice(i,j3)); i=j3; continue; }
+    if(/[A-Za-z_]/.test(c)){ var j4=i+1; while(j4<n&&/[A-Za-z0-9_]/.test(src[j4]))j4++; var w=src.slice(i,j4);
+      var k=j4; while(k<n&&(src[k]===' '||src[k]==='\t'))k++;
+      if(src[k]==='('){ out+=span('fnc',w); } else out+= KW[w]?span('kw',w):(TY[w]?span('ty',w):esc(w));
+      i=j4; bol=false; continue; }
+    if(/[0-9]/.test(c)){ var j5=i+1; while(j5<n&&/[0-9a-fA-FxX]/.test(src[j5]))j5++; out+=span('num',src.slice(i,j5)); i=j5; bol=false; continue; }
+    if(c!==' '&&c!=='\t')bol=false;
+    out+=esc(c); i++;
+  }
+  return out;
+}
+document.querySelectorAll('[data-c] script[type="text/plain"]').forEach(function(s){
+  var pre=document.createElement('pre'),code=document.createElement('code');
+  code.innerHTML=hlC(s.textContent); pre.appendChild(code); s.parentNode.replaceChild(pre,s);
+});
+
+/* ── deck engine ─────────────────────────────────────────────────────────── */
+var slides=[].slice.call(document.querySelectorAll('.slide'));
+var cur=0;
+var elProg=document.getElementById('progress'),elNum=document.getElementById('cnum'),
+    elTot=document.getElementById('ctot'),elAct=document.getElementById('act');
+elTot.textContent=String(slides.length).padStart(2,'0');
+function fit(slide){ var w=slide.querySelector('.wrap'); if(!w)return;
+  w.style.transform='translate(-50%,-50%) scale(1)';
+  var pad=54, vh=window.innerHeight-pad*2, vw=window.innerWidth-pad*2;
+  var r=w.getBoundingClientRect(); var s=Math.min(1, vw/r.width, vh/r.height);
+  w.style.transform='translate(-50%,-50%) scale('+s+')'; }
+function fitActive(){ fit(slides[cur]); }
+function go(i){ i=Math.max(0,Math.min(slides.length-1,i));
+  if(i===cur && slides[cur].classList.contains('active')){fit(slides[cur]);return;}
+  slides[cur].classList.remove('active'); cur=i; slides[cur].classList.add('active'); slides[cur].scrollTop=0;
+  elProg.style.width=((cur)/(slides.length-1)*100)+'%';
+  elNum.textContent=String(cur+1).padStart(2,'0'); elAct.textContent=slides[cur].getAttribute('data-act')||'';
+  location.hash=String(cur+1);
+  requestAnimationFrame(fitActive); requestAnimationFrame(function(){requestAnimationFrame(fitActive);});
+  onEnter(cur); }
+window.addEventListener('keydown',function(e){
+  if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){go(cur+1);e.preventDefault();}
+  else if(e.key==='ArrowLeft'||e.key==='PageUp'){go(cur-1);e.preventDefault();}
+  else if(e.key==='Home'){go(0);}else if(e.key==='End'){go(slides.length-1);}
+  else if(e.key==='o'||e.key==='O'){toggleOverview();}
+  else if(e.key==='f'||e.key==='F'){fitActive();}
+  else if(e.key==='Escape'){document.getElementById('overview').classList.remove('open');}
+});
+window.addEventListener('resize',fitActive);
+var ov=document.getElementById('overview'),ovg=document.getElementById('ovgrid');
+slides.forEach(function(s,i){ var d=document.createElement('div');d.className='ov';
+  d.innerHTML='<span class="num">'+String(i+1).padStart(2,'0')+'</span><span class="t">'+
+    (s.getAttribute('data-title')||'')+'<span class="az">'+(s.getAttribute('data-act')||'')+'</span></span>';
+  d.onclick=function(){go(i);toggleOverview();}; ovg.appendChild(d); });
+function toggleOverview(){ov.classList.toggle('open');}
+
+function onEnter(i){
+  var t=slides[i].getAttribute('data-title');
+  if(t==='The RX journey') e2eReset();
+  else if(t==='The TCP state machine') tcReset();
+}
+
+/* ── sk_buff visualizer (slide 5) ────────────────────────────────────────── */
+var TOTAL=140;
+var skb={room:0, headers:[], payload:0}; // room=headroom(head..data)
+var HDRS={Eth:{size:14,cls:'h0'}, IP:{size:20,cls:'h1'}, TCP:{size:20,cls:'h2'}};
+var elSkbBar=document.getElementById('skbBar'), elSkbPtrs=document.getElementById('skbPtrs'), elSkbStat=document.getElementById('skbStat');
+function skbSums(){ var hsum=skb.headers.reduce(function(a,h){return a+h.size;},0);
+  var data=skb.room, tail=skb.room+hsum+skb.payload, end=TOTAL;
+  return {hsum:hsum, head:0, data:data, tail:tail, end:end, headroom:skb.room, len:hsum+skb.payload, tailroom:end-tail}; }
+function skbRender(msg){
+  var s=skbSums(); var pct=function(x){return (x/TOTAL*100)+'%';};
+  var html='';
+  if(s.headroom>0) html+='<div class="s room" style="width:'+pct(s.headroom)+'">headroom</div>';
+  skb.headers.forEach(function(h){ html+='<div class="s '+HDRS[h.label].cls+'" style="width:'+pct(h.size)+'">'+h.label+'</div>'; });
+  if(skb.payload>0) html+='<div class="s pl" style="width:'+pct(skb.payload)+'">payload</div>';
+  if(s.tailroom>0) html+='<div class="s room" style="width:'+pct(s.tailroom)+'">tailroom</div>';
+  elSkbBar.innerHTML=html||'<div class="s room" style="width:100%">empty buffer (call skb_reserve)</div>';
+  // pointers
+  var pts=[['head',s.head],['data',s.data],['tail',s.tail],['end',s.end]];
+  elSkbPtrs.innerHTML=pts.map(function(p){ return '<span class="pt" style="left:'+(p[1]/TOTAL*100)+'%">'+p[0]+'</span>'; }).join('');
+  elSkbStat.innerHTML='<b>head</b>='+s.head+' <b>data</b>='+s.data+' <b>tail</b>='+s.tail+' <b>end</b>='+s.end+
+    ' &nbsp;·&nbsp; headroom=<b>'+s.headroom+'</b> len=<b>'+s.len+'</b> tailroom=<b>'+s.tailroom+'</b>'+
+    (msg?'<br><span style="color:var(--subtext)">'+msg+'</span>':'');
+}
+function skbPush(label){ var h=HDRS[label];
+  if(skb.payload===0 && skb.headers.length===0) return skbRender('<span class="warn">push needs data first — skb_put a payload, then prepend headers (TX builds inner→outer).</span>');
+  if(skb.room<h.size) return skbRender('<span class="warn">no headroom for '+label+' ('+h.size+'B needed, '+skb.room+'B free) — drivers reserve headroom up front for exactly this.</span>');
+  skb.room-=h.size; skb.headers.unshift({label:label,size:h.size});
+  skbRender('skb_push('+h.size+'): data slid LEFT by '+h.size+' — '+label+' header prepended, no copy.'); }
+document.getElementById('skbReserve').onclick=function(){ if(skb.headers.length||skb.payload) return skbRender('<span class="warn">skb_reserve only on an empty skb — reset first.</span>');
+  skb.room=64; skbRender('skb_reserve(64): data & tail moved to 64, creating headroom for future headers.'); };
+document.getElementById('skbPut').onclick=function(){ var s=skbSums(); if(s.tailroom<24) return skbRender('<span class="warn">no tailroom left.</span>');
+  skb.payload+=24; skbRender('skb_put(24): tail slid RIGHT by 24 — 24B of payload added.'); };
+document.getElementById('skbPushTcp').onclick=function(){skbPush('TCP');};
+document.getElementById('skbPushIp').onclick=function(){skbPush('IP');};
+document.getElementById('skbPushEth').onclick=function(){skbPush('Eth');};
+document.getElementById('skbPull').onclick=function(){ if(!skb.headers.length) return skbRender('<span class="warn">no header to pull.</span>');
+  var h=skb.headers.shift(); skb.room+=h.size; skbRender('skb_pull('+h.size+'): data slid RIGHT — '+h.label+' header stripped (the RX direction).'); };
+document.getElementById('skbReset').onclick=function(){ skb={room:0,headers:[],payload:0}; skbRender('reset — a fresh, empty buffer of '+TOTAL+' bytes.'); };
+skbRender('Start: call skb_reserve(64), skb_put a payload, then prepend TCP / IP / Eth headers and watch data slide left.');
+
+/* ── RX journey player (slide 6) ─────────────────────────────────────────── */
+var E2E=[
+  {z:'NIC',t:'DMA → RX ring',p:'frame copied into the RX ring buffer by the NIC; an <b>IRQ</b> is raised',n:'Hardware writes the frame to memory and interrupts the CPU. No software has touched it yet.'},
+  {z:'softirq',t:'napi_schedule',p:'hardirq masks RX IRQs · <b>napi_schedule()</b> raises <span class="y">NET_RX_SOFTIRQ</span>',n:'The tiny top-half defers the real work to a softirq so the interrupt returns fast.'},
+  {z:'NAPI',t:'driver poll()',p:'<b>net_rx_action</b> → driver poll() drains up to budget=64 frames',n:'Under load the kernel polls instead of taking an IRQ per packet — the NAPI trick.'},
+  {z:'sk_buff',t:'wrap + GRO',p:'frame wrapped in an <b>sk_buff</b> · <b>napi_gro_receive</b> may coalesce segments',n:'Now it’s an skb. GRO merges adjacent TCP segments into one big skb to cut per-packet cost.'},
+  {z:'L2→L3',t:'netif_receive_skb',p:'EtherType 0x0800 → <b class="b">ip_rcv</b> via the packet_type list',n:'__netif_receive_skb_core dispatches on skb->protocol to the IP handler.'},
+  {z:'IP',t:'ip_rcv → local',p:'<b>PREROUTING</b> (netfilter) · routing says "local" · <b class="b">ip_local_deliver</b>',n:'IP runs the netfilter hook, makes a routing decision, and delivers locally (LOCAL_IN).'},
+  {z:'TCP',t:'tcp_v4_rcv',p:'protocol 6 → <b class="b">tcp_v4_rcv</b> · <b>__inet_lookup</b> finds the struct sock',n:'The 4-tuple is hashed into the established table to find the owning connection.'},
+  {z:'socket',t:'queue + wake',p:'data → <b>sk_receive_queue</b> · <b class="g">sk_data_ready()</b> wakes recv()',n:'The payload is queued on the socket and the blocked process is woken to copy it out.'}
+];
+var elE2e=document.getElementById('e2e'), elE2ePay=document.getElementById('e2ePay'), e2eIdx=-1, e2eTimer=null;
+function e2eBuild(){ var html='';
+  E2E.forEach(function(s,k){ html+='<div class="est" data-i="'+k+'"><div class="ez">'+s.z+'</div><div class="et">'+s.t+'</div></div>'+(k<E2E.length-1?'<div class="econn">↑</div>':''); });
+  elE2e.innerHTML=html; }
+function e2ePaint(){ [].forEach.call(elE2e.querySelectorAll('.est'),function(e,k){ e.classList.toggle('lit',k===e2eIdx); e.classList.toggle('done',k<e2eIdx); });
+  if(e2eIdx>=0){ var s=E2E[e2eIdx]; elE2ePay.innerHTML='<b>'+s.z+'</b> &nbsp; '+s.p+'<div style="color:var(--overlay);margin-top:7px;font-size:11.5px">'+s.n+'</div>'; }
+  else elE2ePay.innerHTML='<span style="color:var(--overlay)">Press play to follow a packet from the wire up to recv().</span>';
+  document.getElementById('e2eNote').textContent=e2eIdx>=0?((e2eIdx+1)+'/'+E2E.length):''; }
+function e2eStep(){ if(e2eIdx<E2E.length-1){e2eIdx++;e2ePaint();} return e2eIdx<E2E.length-1; }
+function e2eReset(){ if(e2eTimer){clearInterval(e2eTimer);e2eTimer=null;} e2eIdx=-1; e2ePaint(); var b=document.getElementById('e2ePlay'); if(b)b.textContent='▶ Play'; }
+function e2ePlay(){ var b=document.getElementById('e2ePlay');
+  if(e2eTimer){clearInterval(e2eTimer);e2eTimer=null;b.textContent='▶ Play';return;}
+  if(e2eIdx>=E2E.length-1)e2eReset(); b.textContent='❚❚ Pause';
+  e2eTimer=setInterval(function(){ if(!e2eStep()){clearInterval(e2eTimer);e2eTimer=null;b.textContent='↻ Replay';} },900); }
+document.getElementById('e2ePlay').onclick=e2ePlay;
+document.getElementById('e2eStep').onclick=function(){ if(e2eTimer){clearInterval(e2eTimer);e2eTimer=null;document.getElementById('e2ePlay').textContent='▶ Play';} e2eStep(); };
+document.getElementById('e2eReset').onclick=e2eReset;
+e2eBuild(); e2ePaint();
+
+/* ── TCP state-machine stepper (slide 10) ────────────────────────────────── */
+var TC={
+  aopen:{start:'CLOSED', steps:[
+    {ev:'connect()', s:'SYN_SENT', d:'app calls connect → send SYN'},
+    {ev:'recv SYN,ACK', s:'ESTABLISHED', d:'send ACK — handshake done'},
+    {ev:'(open)', s:'ESTABLISHED', d:'data flows', done:'✓ Connection established (the client side of the 3-way handshake).'}
+  ]},
+  popen:{start:'LISTEN', steps:[
+    {ev:'recv SYN', s:'SYN_RECV', d:'send SYN,ACK'},
+    {ev:'recv ACK', s:'ESTABLISHED', d:'handshake done'},
+    {ev:'(open)', s:'ESTABLISHED', d:'data flows', done:'✓ Server side: LISTEN → SYN_RECV → ESTABLISHED.'}
+  ]},
+  aclose:{start:'ESTABLISHED', steps:[
+    {ev:'close()', s:'FIN_WAIT_1', d:'send FIN'},
+    {ev:'recv ACK', s:'FIN_WAIT_2', d:'our FIN acked'},
+    {ev:'recv FIN', s:'TIME_WAIT', d:'send ACK'},
+    {ev:'2×MSL timeout', s:'CLOSED', d:'linger, then close', done:'✓ Active close. TIME_WAIT guards against a stray old FIN hitting a new connection on the same tuple.'}
+  ]},
+  pclose:{start:'ESTABLISHED', steps:[
+    {ev:'recv FIN', s:'CLOSE_WAIT', d:'send ACK — peer is done'},
+    {ev:'close()', s:'LAST_ACK', d:'app closes → send FIN'},
+    {ev:'recv ACK', s:'CLOSED', d:'our FIN acked', done:'✓ Passive close. CLOSE_WAIT means "the app still needs to call close()" — a leak if it never does.'}
+  ]}
+};
+var tcMode='aopen', tcIdx=-1, tcTimer=null;
+var elTcSteps=document.getElementById('tcSteps'), elTcState=document.getElementById('tcState'), elTcCur=document.getElementById('tcCur');
+function tcRender(){ var sc=TC[tcMode];
+  var cur = tcIdx<0 ? sc.start : sc.steps[tcIdx].s;
+  elTcCur.innerHTML='state: <b>'+cur+'</b>';
+  var html='<div class="ln '+(tcIdx<0?'cur':'done')+'"><span class="lx">'+sc.start+'</span><span>initial state</span></div>';
+  sc.steps.forEach(function(st,k){ var cls=k<tcIdx?'done':(k===tcIdx?'cur':'');
+    html+='<div class="ln '+cls+'"><span class="lx">'+st.s+'</span><span>'+st.ev+'</span><span class="ld">'+st.d+'</span></div>'; });
+  elTcSteps.innerHTML=html;
+  var st=sc.steps[tcIdx];
+  elTcState.innerHTML=(st&&st.done)?'<span class="vd good">'+st.done+'</span>':'';
+}
+function tcStep(){ var sc=TC[tcMode]; if(tcIdx<sc.steps.length-1){tcIdx++;tcRender();} return tcIdx<sc.steps.length-1; }
+function tcReset(){ if(tcTimer){clearInterval(tcTimer);tcTimer=null;} tcIdx=-1; tcRender(); }
+function tcRun(){ if(tcTimer){clearInterval(tcTimer);tcTimer=null;return;} if(tcIdx>=TC[tcMode].steps.length-1)tcReset();
+  tcTimer=setInterval(function(){ if(!tcStep()){clearInterval(tcTimer);tcTimer=null;} },850); }
+document.getElementById('tcStep').onclick=function(){ if(tcTimer){clearInterval(tcTimer);tcTimer=null;} tcStep(); };
+document.getElementById('tcRun').onclick=tcRun;
+document.getElementById('tcReset').onclick=tcReset;
+[].forEach.call(document.querySelectorAll('#tcMode .btn'),function(b){
+  b.onclick=function(){ tcMode=b.getAttribute('data-m');
+    [].forEach.call(document.querySelectorAll('#tcMode .btn'),function(c){c.classList.toggle('on',c===b);}); tcReset(); }; });
+tcRender();
+
+/* ── generic clickable decoder (netfilter, eBPF taps) ────────────────────── */
+function buildDecoder(pickId, explainId, items){
+  var pick=document.getElementById(pickId), exp=document.getElementById(explainId);
+  items.forEach(function(it,k){ var b=document.createElement('button'); b.className='btn'+(k===0?' on':''); b.textContent=it.k;
+    b.onclick=function(){ [].forEach.call(pick.children,function(c){c.classList.remove('on');}); b.classList.add('on'); exp.innerHTML=it.ex; };
+    pick.appendChild(b); });
+  exp.innerHTML=items[0].ex;
+}
+buildDecoder('nfPick','nfExplain',[
+  {k:'PREROUTING', ex:'<b>NF_INET_PRE_ROUTING.</b> The first hook every inbound packet hits, before any routing decision. Home of <b>connection tracking</b> and <b>DNAT</b> (port forwarding). nftables <code>prerouting</code>, iptables <code>nat</code>/<code>mangle</code> PREROUTING.'},
+  {k:'→ routing →', ex:'<b>The routing decision</b> (not a hook). The kernel decides: is this packet for a <i>local</i> socket → <code>LOCAL_IN</code>, or to be <i>forwarded</i> → <code>FORWARD</code>? Everything after branches here.'},
+  {k:'LOCAL_IN', ex:'<b>NF_INET_LOCAL_IN.</b> Inbound packets for THIS host, just before they reach a socket. The classic <b>input firewall</b> (iptables <code>filter</code> INPUT). Drop here and the socket never sees it.'},
+  {k:'FORWARD', ex:'<b>NF_INET_FORWARD.</b> Packets routed THROUGH this host (acting as a router). The <b>forwarding firewall</b> — where a gateway like pfSense filters transit traffic it doesn’t terminate.'},
+  {k:'LOCAL_OUT', ex:'<b>NF_INET_LOCAL_OUT.</b> Locally-generated packets, just after leaving a socket. Output firewall + OUTPUT-chain NAT. An egress-policy idea (NetWatch’s) lives conceptually near here.'},
+  {k:'POSTROUTING', ex:'<b>NF_INET_POST_ROUTING.</b> The last hook before a packet leaves the box, after routing. Home of <b>SNAT / masquerade</b>. Both forwarded and locally-generated packets pass through.'}
+]);
+buildDecoder('ebPick','ebExplain',[
+  {k:'XDP', ex:'<b>XDP — eXpress Data Path.</b> Runs in the driver on the raw frame (<code>xdp_buff</code>) BEFORE an sk_buff exists. Fastest possible; verdicts PASS/DROP/TX/REDIRECT. DDoS scrubbing, L4 load balancers (Katran). The earliest, rawest tap.'},
+  {k:'tc / clsact', ex:'<b>tc-BPF (clsact qdisc).</b> Ingress (after the skb is built, before the stack) and egress (in dev_queue_xmit). Full <code>sk_buff</code> access; can mangle and redirect. Cilium’s datapath lives here.'},
+  {k:'kprobe', ex:'<b>kprobe / fentry.</b> Attach to (almost) any kernel function — e.g. <b>tcp_v4_connect</b>. <b>NetWatch’s Phase-1 hook</b>: read the task (pid/comm) and destination at connect time for per-process attribution.'},
+  {k:'sockops / sk', ex:'<b>sock_ops &amp; socket filters.</b> Hook TCP lifecycle events (connect, retransmit, RTT, state changes) and per-socket packet filtering — the original cBPF use, as in tcpdump’s BPF.'},
+  {k:'tracepoint', ex:'<b>tracepoints / raw_tp.</b> Stable, kernel-blessed hooks (e.g. <code>net/</code> tracepoints). The durable alternative to a kprobe when one covers your event — same BPF underneath, far less fragile across kernels.'},
+  {k:'cgroup / LSM', ex:'<b>cgroup hooks &amp; BPF-LSM.</b> Per-cgroup <code>connect</code>/<code>sendmsg</code> gates and security-policy hooks — these can <i>enforce</i>, not just observe. Where container networking and policy attach.'}
+]);
+
+/* ── boot ────────────────────────────────────────────────────────────────── */
+(function(){ var h=parseInt((location.hash||'').replace('#',''),10); go(isFinite(h)&&h>=1?h-1:0); })();
+</script>
+</body>
+</html>

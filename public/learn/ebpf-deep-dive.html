@@ -1,0 +1,1413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>eBPF, end to end — a NetWatch deep dive</title>
+<style>
+  /* ── Catppuccin Mocha palette (matches the NetWatch TUI) ──────────────── */
+  :root{
+    --crust:#11111b; --mantle:#181825; --base:#1e1e2e;
+    --surface0:#313244; --surface1:#45475a; --surface2:#585b70;
+    --overlay:#6c7086; --subtext:#a6adc8; --text:#cdd6f4;
+    --mauve:#cba6f7; --blue:#89b4fa; --sapphire:#74c7ec; --sky:#89dceb;
+    --green:#a6e3a1; --yellow:#f9e2af; --peach:#fab387; --red:#f38ba8;
+    --pink:#f5c2e7; --teal:#94e2d5; --lavender:#b4befe;
+    --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 800px at 80% -10%, #232336 0%, transparent 60%),
+      radial-gradient(1000px 700px at -10% 110%, #1b1b2b 0%, transparent 55%),
+      var(--base);
+    color:var(--text); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+  }
+
+  /* ── Chrome ───────────────────────────────────────────────────────────── */
+  #progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--mauve),var(--blue),var(--teal));width:0;z-index:50;transition:width .25s ease}
+  #brand{position:fixed;top:14px;left:20px;z-index:40;font-family:var(--mono);font-size:13px;letter-spacing:.5px;color:var(--subtext)}
+  #brand b{color:var(--text)}
+  #brand .dot{color:var(--green)}
+  #act{position:fixed;top:14px;right:20px;z-index:40;font-family:var(--mono);font-size:12px;color:var(--overlay);letter-spacing:.12em;text-transform:uppercase}
+  #counter{position:fixed;bottom:14px;right:20px;z-index:40;font-family:var(--mono);font-size:13px;color:var(--overlay)}
+  #counter b{color:var(--subtext)}
+  #hint{position:fixed;bottom:14px;left:20px;z-index:40;font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  #hint kbd{color:var(--subtext)}
+  kbd{font-family:var(--mono);background:var(--surface0);border:1px solid var(--surface1);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:.85em;color:var(--text)}
+
+  /* ── Deck / slides ────────────────────────────────────────────────────── */
+  #deck{position:relative;height:100vh;width:100vw}
+  .slide{position:absolute;inset:0;display:none;overflow:hidden;opacity:0;transition:opacity .35s ease}
+  .slide.active{display:block;opacity:1}
+  .wrap{position:absolute;left:50%;top:50%;width:1140px;max-width:92vw;
+        transform:translate(-50%,-50%);transform-origin:center center}
+
+  h1{font-size:clamp(34px,5.5vw,62px);line-height:1.04;margin:0 0 18px;letter-spacing:-.02em}
+  h1 .grad{background:linear-gradient(90deg,var(--mauve),var(--sapphire),var(--teal));-webkit-background-clip:text;background-clip:text;color:transparent}
+  h2{font-size:clamp(23px,3.1vw,36px);margin:0 0 4px;letter-spacing:-.01em}
+  .kick{font-family:var(--mono);font-size:12.5px;text-transform:uppercase;letter-spacing:.22em;color:var(--mauve);margin:0 0 9px}
+  .lede{font-size:clamp(16px,2vw,21px);color:var(--subtext);line-height:1.55;max-width:62ch}
+  p{line-height:1.6}
+  .muted{color:var(--subtext)} .small{font-size:14px}
+  b.hl{color:var(--text)}
+  ul.clean{list-style:none;padding:0;margin:14px 0 0}
+  ul.clean li{padding:7px 0 7px 26px;position:relative;color:var(--subtext);line-height:1.5}
+  ul.clean li::before{content:"▸";position:absolute;left:0;color:var(--blue)}
+  ul.clean li b{color:var(--text)}
+  code.inl{font-family:var(--mono);background:var(--surface0);border:1px solid var(--surface1);border-radius:6px;padding:1px 6px;font-size:.88em;color:var(--lavender)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--surface1);color:var(--subtext);margin:0 6px 6px 0;background:var(--mantle)}
+  .tag.k{color:var(--mauve);border-color:#3a2f50}
+  .tag.g{color:var(--green);border-color:#2f4a36}
+  .tag.b{color:var(--blue);border-color:#2b3d5c}
+  .cols{display:grid;grid-template-columns:1.05fr .95fr;gap:34px;align-items:start}
+  @media(max-width:880px){.cols{grid-template-columns:1fr;gap:20px}}
+
+  /* ── Code blocks ──────────────────────────────────────────────────────── */
+  .code{position:relative;background:var(--crust);border:1px solid var(--surface0);border-radius:12px;overflow:hidden;box-shadow:0 18px 40px -24px #000}
+  .code .bar{display:flex;align-items:center;gap:7px;padding:9px 13px;background:var(--mantle);border-bottom:1px solid var(--surface0)}
+  .code .bar i{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .code .bar .r{background:#f38ba8}.code .bar .y{background:#f9e2af}.code .bar .g{background:#a6e3a1}
+  .code .bar span{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  pre{margin:0;padding:13px 16px;overflow:auto;font-family:var(--mono);font-size:clamp(11px,1.25vw,13.5px);line-height:1.5;tab-size:4}
+  pre code{white-space:pre}
+  .cap{font-family:var(--mono);font-size:11.5px;color:var(--overlay);margin:8px 2px 0}
+  .kw{color:var(--mauve)} .ty{color:var(--yellow)} .fn{color:var(--blue)}
+  .s{color:var(--green)} .c{color:var(--overlay);font-style:italic}
+  .n{color:var(--peach)} .macro{color:var(--teal)} .attr{color:var(--peach)} .lt{color:var(--pink)}
+
+  /* ── Diagram primitives ───────────────────────────────────────────────── */
+  .diagram{display:flex;gap:10px;align-items:stretch;justify-content:center;flex-wrap:wrap;margin-top:8px}
+  .col{flex:1 1 0;min-width:150px;background:var(--mantle);border:1px solid var(--surface0);border-radius:12px;padding:13px}
+  .col h4{margin:0 0 10px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--subtext)}
+  .node{font-family:var(--mono);font-size:12.5px;background:var(--surface0);border:1px solid var(--surface1);border-radius:8px;padding:7px 10px;margin:6px 0;color:var(--text)}
+  .node.k{border-color:#3a2f50;color:var(--mauve)} .node.g{border-color:#2f4a36;color:var(--green)}
+  .node.b{border-color:#2b3d5c;color:var(--blue)} .node.p{border-color:#5c3a44;color:var(--pink)}
+  .node.y{border-color:#5c512b;color:var(--yellow)}
+  .arrow{align-self:center;font-size:26px;color:var(--overlay);padding:0 2px}
+  @media(max-width:820px){.arrow{transform:rotate(90deg)}}
+  .flowv{display:flex;flex-direction:column;gap:0;align-items:center;font-family:var(--mono);margin-top:6px}
+  .flowv .node{min-width:min(560px,86vw);text-align:center}
+  .flowv .down{color:var(--overlay);font-size:20px;line-height:1}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:6px}
+  .card{background:var(--mantle);border:1px solid var(--surface0);border-radius:12px;padding:14px 16px}
+  .card h4{margin:0 0 6px;font-size:15px;color:var(--text)}
+  .card h4 .loc{font-family:var(--mono);font-size:11px;color:var(--overlay);float:right;font-weight:400}
+  .card p{margin:0;font-size:13.5px;color:var(--subtext);line-height:1.5}
+
+  /* ── Interactive: shared control styling ──────────────────────────────── */
+  .ix{background:var(--mantle);border:1px solid var(--surface0);border-radius:14px;padding:16px 18px;margin-top:10px}
+  .ix .ixhead{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+  .ix .ixhead .pill{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--green);border:1px solid #2f4a36;border-radius:999px;padding:2px 8px}
+  .ix .ixhead h4{margin:0;font-size:15px;color:var(--text);font-weight:600}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  .btn{font-family:var(--mono);font-size:12.5px;background:var(--surface0);color:var(--text);border:1px solid var(--surface1);border-bottom-width:2px;border-radius:8px;padding:6px 13px;cursor:pointer;transition:.12s;user-select:none}
+  .btn:hover{background:var(--surface1);border-color:var(--surface2)}
+  .btn:active{transform:translateY(1px);border-bottom-width:1px}
+  .btn.primary{color:var(--mauve);border-color:#3a2f50;background:#221c30}
+  .btn.primary:hover{background:#2a2240}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}
+  .seg .btn.on{background:var(--blue);color:var(--crust);border-color:var(--blue)}
+
+  /* ── Instruction decoder ──────────────────────────────────────────────── */
+  .insn{display:flex;font-family:var(--mono);border-radius:10px;overflow:hidden;border:1px solid var(--surface1);margin-top:4px}
+  .insn .f{flex:0 0 auto;padding:11px 8px;text-align:center;cursor:pointer;border-right:1px solid var(--surface1);transition:.12s;position:relative}
+  .insn .f:last-child{border-right:0}
+  .insn .f .fb{font-size:15px;color:var(--text);letter-spacing:.04em}
+  .insn .f .fl{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;margin-top:5px}
+  .insn .f.op{background:#2a1c2e;flex-grow:1}     .insn .f.op .fl{color:var(--mauve)}
+  .insn .f.dst{background:#1c2436;flex-grow:1}     .insn .f.dst .fl{color:var(--blue)}
+  .insn .f.src{background:#1c2630;flex-grow:1}     .insn .f.src .fl{color:var(--sapphire)}
+  .insn .f.off{background:#2a261c;flex-grow:2}      .insn .f.off .fl{color:var(--yellow)}
+  .insn .f.imm{background:#1c2a20;flex-grow:4}      .insn .f.imm .fl{color:var(--green)}
+  .insn .f.sel{outline:2px solid var(--text);outline-offset:-2px;filter:brightness(1.35)}
+  .insn-asm{font-family:var(--mono);font-size:15px;color:var(--text);margin:2px 0 12px}
+  .insn-asm .reg{color:var(--blue)} .insn-asm .lit{color:var(--green)} .insn-asm .mn{color:var(--mauve)}
+  .insn-explain{min-height:62px;font-size:13.5px;color:var(--subtext);line-height:1.5;border-left:2px solid var(--surface1);padding:2px 0 2px 12px;margin-top:10px}
+  .insn-explain b{color:var(--text)}
+
+  /* ── Pipeline (animated) ──────────────────────────────────────────────── */
+  .pipe{display:flex;align-items:stretch;gap:0;margin-top:6px;flex-wrap:wrap}
+  .pstage{flex:1 1 0;min-width:128px;background:var(--mantle);border:1px solid var(--surface0);border-radius:12px;padding:12px 12px;position:relative;transition:.25s;opacity:.5}
+  .pstage.lit{opacity:1;border-color:var(--blue);box-shadow:0 0 0 1px var(--blue),0 10px 30px -16px var(--blue)}
+  .pstage .pz{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--overlay)}
+  .pstage .pt{font-size:14px;color:var(--text);margin:5px 0 3px;font-weight:600}
+  .pstage .pd{font-size:11.5px;color:var(--subtext);line-height:1.4}
+  .pstage .ring-dot{position:absolute;top:10px;right:11px;width:8px;height:8px;border-radius:50%;background:var(--surface1)}
+  .pstage.lit .ring-dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .pconn{align-self:center;color:var(--overlay);font-size:20px;padding:0 4px}
+  .kdiv{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--overlay);text-align:center;margin:14px 0 2px;position:relative}
+  .kdiv::before,.kdiv::after{content:"";position:absolute;top:50%;width:38%;height:1px;background:linear-gradient(90deg,transparent,var(--surface1))}
+  .kdiv::before{left:0;background:linear-gradient(90deg,transparent,var(--surface1))}
+  .kdiv::after{right:0;background:linear-gradient(90deg,var(--surface1),transparent)}
+
+  /* register grid */
+  .vmgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:7px;margin-top:8px;font-family:var(--mono)}
+  .vmgrid .r{background:var(--mantle);border:1px solid var(--surface0);border-radius:8px;padding:8px 9px}
+  .vmgrid .r .rn{font-size:12px;color:var(--blue)}
+  .vmgrid .r .rr{font-size:10.5px;color:var(--overlay);margin-top:3px;line-height:1.3}
+
+  /* ── Verifier stepper (slide 7) ───────────────────────────────────────── */
+  .vfsteps{font-family:var(--mono);font-size:12px;border:1px solid var(--surface0);border-radius:9px;overflow:hidden}
+  .vfsteps .ln{padding:6px 11px;border-bottom:1px solid var(--mantle);color:var(--overlay);display:flex;gap:9px;transition:.12s;align-items:baseline}
+  .vfsteps .ln:last-child{border-bottom:0}
+  .vfsteps .ln.done{color:var(--subtext)} .vfsteps .ln.done .lx{color:var(--green)}
+  .vfsteps .ln.cur{background:#1c2436;color:var(--text)}
+  .vfsteps .ln .lx{color:var(--blue);flex:0 0 18px}
+  .vfsteps .ln .ld{color:var(--overlay);font-size:11px;margin-left:auto;text-align:right;max-width:48%}
+  .vfsteps .ln.cur .ld{color:var(--subtext)}
+  .vfstate{display:flex;align-items:center;gap:14px;margin-top:11px;font-family:var(--mono);font-size:12.5px;flex-wrap:wrap}
+  .vfstate .refs{color:var(--subtext)} .vfstate .refs b{color:var(--peach);font-size:15px}
+  .vfstate .vd{padding:6px 12px;border-radius:8px;line-height:1.4}
+  .vfstate .vd.good{background:#16241a;border:1px solid #2f4a36;color:var(--green)}
+  .vfstate .vd.bad{background:#2a1820;border:1px solid #5c3a44;color:var(--red)}
+
+  /* ── Struct byte grid (slide 13) ──────────────────────────────────────── */
+  .bytegrid{display:grid;grid-template-columns:repeat(16,1fr);gap:3px;font-family:var(--mono)}
+  .bytegrid .by{aspect-ratio:1/1;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--crust);transition:.18s;cursor:default;opacity:.85}
+  .bytegrid .by.dim{opacity:.16}
+  .bytegrid .by.pad{background:var(--surface2);color:var(--subtext);opacity:.5}
+  .bytegrid .by.bad{outline:2px solid var(--red);outline-offset:-2px}
+  .bf-kind{background:var(--mauve)} .bf-pad{background:var(--surface2)} .bf-tgid{background:var(--blue)}
+  .bf-pid{background:var(--sapphire)} .bf-saddr{background:var(--overlay)} .bf-daddr{background:var(--green)}
+  .bf-sport{background:var(--peach)} .bf-dport{background:var(--yellow)} .bf-comm{background:var(--teal)}
+  .bf-ts{background:var(--pink)}
+  #bfields .btn{font-size:11px;padding:4px 9px}
+  #bfields .btn .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+
+  /* ── Timeline scrubber (slide 15) ─────────────────────────────────────── */
+  .tlmarks{display:flex;justify-content:space-between;margin-top:8px;font-family:var(--mono);font-size:10.5px}
+  .tlmarks .tm{flex:1 1 0;text-align:center;color:var(--overlay);line-height:1.3;padding:0 3px;transition:.15s}
+  .tlmarks .tm.on{color:var(--mauve)}
+  .tlmarks .tm.entry{color:var(--green)}
+  .tlpanel{background:var(--crust);border:1px solid var(--surface0);border-radius:10px;padding:12px 14px;font-family:var(--mono);font-size:12px}
+  .tlpanel h5{margin:0 0 9px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--subtext)}
+  .tlpanel .row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--mantle)}
+  .tlpanel .row .v{font-weight:600}
+  .tlpanel .v.ok{color:var(--green)} .tlpanel .v.zero{color:var(--red)} .tlpanel .v.na{color:var(--overlay)}
+  .tlpanel.read{box-shadow:0 0 0 1px var(--green)}
+  .tlverdict{margin-top:14px;font-family:var(--mono);font-size:13px;padding:10px 14px;border-radius:9px;line-height:1.5}
+  .tlverdict.good{background:#16241a;border:1px solid #2f4a36;color:var(--green)}
+  .tlverdict.bad{background:#2a1820;border:1px solid #5c3a44;color:var(--red)}
+
+  /* ── Ring buffer (slide 17) ───────────────────────────────────────────── */
+  .ringrow{display:grid;grid-template-columns:repeat(16,1fr);gap:4px;margin-top:4px}
+  .ringrow .slot{aspect-ratio:1/1.5;border-radius:5px;border:1px solid var(--surface1);background:var(--mantle);transition:.18s;position:relative}
+  .ringrow .slot.full{background:var(--green);border-color:var(--green);box-shadow:0 0 8px -2px var(--green)}
+  .ringrow .slot.head{outline:2px solid var(--blue);outline-offset:1px}
+  .ringrow .slot.tail{outline:2px dashed var(--peach);outline-offset:1px}
+  .ringstat{font-family:var(--mono);font-size:12px;color:var(--subtext);margin-top:11px;min-height:20px}
+  .ringstat b{color:var(--text)} .ringstat .drop{color:var(--red)} .ringstat .wake{color:var(--green)}
+
+  /* ── End-to-end player (slide 19) ─────────────────────────────────────── */
+  .e2e{display:flex;flex-wrap:wrap;gap:0;align-items:stretch}
+  .e2e .est{flex:1 1 0;min-width:118px;border:1px solid var(--surface0);background:var(--mantle);border-radius:10px;padding:10px;opacity:.4;transition:.25s}
+  .e2e .est.lit{opacity:1;border-color:var(--mauve);box-shadow:0 0 0 1px var(--mauve)}
+  .e2e .est.done{opacity:.85;border-color:#2f4a36}
+  .e2e .est .ez{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--overlay)}
+  .e2e .est .et{font-size:12.5px;color:var(--text);margin-top:5px;font-weight:600;line-height:1.25}
+  .e2e .econn{align-self:center;color:var(--overlay);font-size:15px;padding:0 3px}
+  .e2epay{margin-top:13px;background:var(--crust);border:1px solid var(--surface0);border-radius:10px;padding:12px 15px;font-family:var(--mono);font-size:12.5px;color:var(--subtext);min-height:54px;line-height:1.6}
+  .e2epay b{color:var(--text)} .e2epay .k{color:var(--yellow)} .e2epay .g{color:var(--green)} .e2epay .bl{color:var(--blue)}
+
+  /* ── Overview grid ────────────────────────────────────────────────────── */
+  #overview{position:fixed;inset:0;z-index:60;background:rgba(17,17,27,.94);backdrop-filter:blur(6px);display:none;padding:54px clamp(20px,5vw,80px);overflow:auto}
+  #overview.open{display:block}
+  #overview h3{font-family:var(--mono);color:var(--subtext);font-weight:500;letter-spacing:.1em;text-transform:uppercase;font-size:13px;margin:0 0 18px}
+  .ovgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:11px}
+  .ov{background:var(--mantle);border:1px solid var(--surface0);border-radius:10px;padding:11px 13px;cursor:pointer;transition:.15s;display:flex;gap:10px;align-items:baseline}
+  .ov:hover{border-color:var(--mauve);transform:translateY(-2px);background:var(--base)}
+  .ov .num{font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  .ov .t{font-size:13.5px;color:var(--text);line-height:1.3}
+  .ov .az{font-family:var(--mono);font-size:9px;color:var(--mauve);letter-spacing:.1em;text-transform:uppercase;display:block;margin-top:3px}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div id="brand"><b>eBPF</b> <span class="muted">end&nbsp;to&nbsp;end</span> <span class="dot">●</span></div>
+<div id="act"></div>
+<div id="hint"><kbd>←</kbd> <kbd>→</kbd> move · <kbd>O</kbd> overview · <kbd>F</kbd> fit</div>
+<div id="counter"><b id="cnum">01</b> / <span id="ctot">00</span></div>
+
+<main id="deck">
+
+  <!-- 1 ─ Title ─────────────────────────────────────────────────────────── -->
+  <section class="slide" data-title="Title" data-act="Intro">
+    <div class="wrap">
+      <p class="kick">Contributor deep-dive · built on NetWatch's real eBPF</p>
+      <h1>eBPF, <span class="grad">end to end</span>.<br>From a kernel hook to a process name.</h1>
+      <p class="lede">How a <code class="inl">~250</code>-line program lets NetWatch say <i>which process</i> opened
+        a connection — by running safe, verified code <b class="hl">inside the Linux kernel</b>. We build the whole
+        idea from first principles, then walk the exact aya program that ships in <code class="inl">netwatch-sdk</code>,
+        bug scars and all.</p>
+      <div style="margin-top:16px">
+        <span class="tag k">the eBPF VM</span><span class="tag k">the verifier</span><span class="tag b">maps &amp; ring buffers</span>
+        <span class="tag b">kprobes</span><span class="tag g">aya / Rust</span><span class="tag g">CO-RE &amp; BTF</span>
+        <span class="tag">the #38 war story</span>
+      </div>
+      <p class="small muted" style="margin-top:18px">Five acts · ~23 stops · three live simulations you can drive.
+        Everything here is grounded in files you can open: <code class="inl">crates/ebpf-programs/src/main.rs</code>,
+        <code class="inl">crates/common/src/lib.rs</code>, <code class="inl">src/ebpf/source.rs</code>.</p>
+    </div>
+  </section>
+
+  <!-- 2 ─ The problem ───────────────────────────────────────────────────── -->
+  <section class="slide" data-title="The problem" data-act="I · Foundations">
+    <div class="wrap">
+      <p class="kick">Why run code in the kernel at all</p>
+      <h2>The visibility you want lives on the wrong side of a wall</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">NetWatch wants to name the process behind every connection. But the moment a socket is
+            interesting — the <code class="inl">connect()</code> — the answer (pid, comm) is known <b class="hl">only
+            for an instant, deep in the kernel</b>, and only to the task making the call.</p>
+          <ul class="clean">
+            <li><b>Polling <code class="inl">/proc</code></b> races the kernel: short-lived flows open and close
+              between two reads. You see the connection, never the owner.</li>
+            <li><b>A kernel module</b> could see it — but a bug is a kernel panic, and you'd recompile per kernel.
+              Nobody ships that to end users.</li>
+            <li><b>Packet capture alone</b> sees bytes on the wire, not the <i>task</i> that produced them.</li>
+          </ul>
+          <p class="small muted">You need to run <i>your</i> logic <i>at the kernel event</i>, with the kernel's
+            guarantee that your logic can't crash or hang it.</p>
+        </div>
+        <div>
+          <div class="diagram">
+            <div class="col"><h4>Userspace</h4>
+              <div class="node">netwatch (your TUI)</div>
+              <div class="node b">reads /proc, libpcap</div>
+              <div class="node p" style="opacity:.55">…always a step behind</div>
+            </div>
+            <div class="arrow">⇡</div>
+            <div class="col"><h4>Kernel</h4>
+              <div class="node k">tcp_v4_connect()</div>
+              <div class="node g">pid · comm · dest known HERE</div>
+              <div class="node" style="opacity:.55">gone microseconds later</div>
+            </div>
+          </div>
+          <p class="cap">eBPF erases the wall: a sliver of your code, running right at the kernel event.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 ─ Mental model / pipeline (ANIMATED) ────────────────────────────── -->
+  <section class="slide" data-title="The mental model" data-act="I · Foundations">
+    <div class="wrap">
+      <p class="kick">The whole idea in one picture</p>
+      <h2>Event → hook → your program → map → userspace</h2>
+      <p class="lede" style="max-width:78ch">Every eBPF system is this pipeline. A kernel <b class="hl">event</b> hits a
+        <b class="hl">hook</b>; the kernel runs <b class="hl">your verified program</b>; it stashes data in a
+        <b class="hl">map</b>; userspace reads the map. Press play and watch one <code class="inl">connect()</code> flow through.</p>
+
+      <div class="ix">
+        <div class="ixhead"><span class="pill">live</span><h4>The eBPF pipeline</h4></div>
+        <div class="pipe" id="pipe">
+          <div class="pstage" data-s="0"><span class="ring-dot"></span><div class="pz">event</div><div class="pt">connect()</div><div class="pd">a task calls into the kernel</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="1"><span class="ring-dot"></span><div class="pz">hook</div><div class="pt">kprobe</div><div class="pd">attached to tcp_v4_connect</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="2"><span class="ring-dot"></span><div class="pz">program</div><div class="pt">your bytecode</div><div class="pd">verified + JITed, runs in-kernel</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="3"><span class="ring-dot"></span><div class="pz">map</div><div class="pt">ring buffer</div><div class="pd">shared kernel⇄user memory</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="4"><span class="ring-dot"></span><div class="pz">userspace</div><div class="pt">netwatch</div><div class="pd">reads, decodes, attributes</div></div>
+        </div>
+        <div class="controls">
+          <button class="btn primary" id="pipePlay">▶ Play</button>
+          <button class="btn" id="pipeStep">Step</button>
+          <button class="btn" id="pipeReset">Reset</button>
+          <span class="small muted" id="pipeNote" style="margin-left:6px"></span>
+        </div>
+      </div>
+      <p class="cap">The kernel boundary sits between <b>program/map</b> and <b>userspace</b> — but the map straddles it.
+        That straddle is the whole trick.</p>
+    </div>
+  </section>
+
+  <!-- 4 ─ Taxonomy ──────────────────────────────────────────────────────── -->
+  <section class="slide" data-title="Where you can hook" data-act="I · Foundations">
+    <div class="wrap">
+      <p class="kick">Program types &amp; attach points</p>
+      <h2>eBPF is a family — pick the hook that sees your event</h2>
+      <p class="lede" style="max-width:80ch">A program's <b class="hl">type</b> decides where it attaches, what context it
+        gets, and which helpers it may call. NetWatch lives in the <b class="hl">kprobe</b> corner — dynamic
+        instrumentation of an arbitrary kernel function — because <code class="inl">tcp_v4_connect</code> is exactly the
+        moment it cares about.</p>
+      <div class="grid2">
+        <div class="card"><h4>kprobe / kretprobe <span class="loc">← us</span></h4><p>Attach to (almost) any kernel
+          function, entry or return. Maximum reach; pays for it in stability — the function signature is an internal
+          detail that can shift between kernels.</p></div>
+        <div class="card"><h4>tracepoint <span class="loc">stable</span></h4><p>Kernel-blessed static hooks with a
+          documented, stable layout. Fewer of them, but they don't move under you. The grown-up alternative to a kprobe
+          when one exists.</p></div>
+        <div class="card"><h4>XDP <span class="loc">L2, fastest</span></h4><p>Runs at the driver before an
+          <code class="inl">sk_buff</code> even exists — drop/redirect at line rate. The DDoS / load-balancer corner.</p></div>
+        <div class="card"><h4>tc (traffic control) <span class="loc">L3</span></h4><p>Ingress/egress on the qdisc with
+          full packet context. Where shaping and per-packet policy live.</p></div>
+        <div class="card"><h4>LSM / cgroup <span class="loc">policy</span></h4><p>Security hooks and per-cgroup
+          socket/connect gates — enforcement points, not just observation.</p></div>
+        <div class="card"><h4>perf / uprobe <span class="loc">profiling</span></h4><p>Sampling and
+          <i>user</i>-space function probes. Out of scope here, but the same machine underneath.</p></div>
+      </div>
+      <p class="cap">Same VM, verifier, maps, and JIT under all of them. Learn the kprobe path and the rest is mostly
+        a different context struct and helper set.</p>
+    </div>
+  </section>
+
+  <!-- 5 ─ The VM + instruction decoder (INTERACTIVE) ────────────────────── -->
+  <section class="slide" data-title="The eBPF machine" data-act="II · The machine">
+    <div class="wrap">
+      <p class="kick">A tiny RISC machine inside the kernel</p>
+      <h2>11 registers, a 512-byte stack, 8 bytes per instruction</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">eBPF isn't a scripting language — it's a real instruction set the kernel interprets or
+            JIT-compiles to native code. Deliberately minimal, so it can be <b class="hl">proven safe</b> before it runs.</p>
+          <div class="vmgrid">
+            <div class="r"><div class="rn">r0</div><div class="rr">return value</div></div>
+            <div class="r"><div class="rn">r1–r5</div><div class="rr">call args (ctx in r1)</div></div>
+            <div class="r"><div class="rn">r6–r9</div><div class="rr">callee-saved</div></div>
+            <div class="r"><div class="rn">r10</div><div class="rr">frame ptr (read-only)</div></div>
+          </div>
+          <p class="small muted" style="margin-top:10px">Every instruction is the same 64-bit shape. Click the fields →</p>
+        </div>
+        <div>
+          <div class="ix">
+            <div class="ixhead"><span class="pill">interactive</span><h4>Decode a BPF instruction</h4></div>
+            <div class="seg" id="insnPick" style="margin-bottom:10px"></div>
+            <div class="insn-asm" id="insnAsm"></div>
+            <div class="insn" id="insnBits"></div>
+            <div class="insn-explain" id="insnExplain">Pick an instruction, then click a field to see what those
+              bytes mean.</div>
+          </div>
+        </div>
+      </div>
+      <p class="cap"><code class="inl">opcode(8) · dst(4) · src(4) · offset(16) · imm(32)</code> — 64 bits, always.
+        The verifier reasons over a graph of these.</p>
+    </div>
+  </section>
+
+  <!-- 6 ─ Maps ──────────────────────────────────────────────────────────── -->
+  <section class="slide" data-title="Maps" data-act="II · The machine">
+    <div class="wrap">
+      <p class="kick">The shared memory between two worlds</p>
+      <h2>Maps are how kernel code and your process touch the same bytes</h2>
+      <p class="lede" style="max-width:80ch">A program is stateless and short-lived — it runs, returns, and forgets.
+        <b class="hl">Maps</b> are the memory that outlives a single run and crosses the kernel boundary. Both the BPF
+        program (via helpers) and userspace (via the <code class="inl">bpf()</code> syscall) read and write them.</p>
+      <div class="grid2">
+        <div class="card"><h4>HASH / LRU_HASH</h4><p>Key→value tables. The bread and butter — e.g. a flow-key →
+          metadata cache. LRU variant evicts under pressure instead of failing.</p></div>
+        <div class="card"><h4>ARRAY / PERCPU_ARRAY</h4><p>Index→value, fixed size. Per-CPU variants give each core its
+          own copy so the program never contends a lock.</p></div>
+        <div class="card"><h4>RINGBUF <span class="loc">← us</span></h4><p>A multi-producer, single-consumer queue for
+          streaming <i>events</i> to userspace. MPSC, preserves order, supports <code class="inl">reserve/commit</code>.
+          NetWatch's <code class="inl">EVENTS</code> map.</p></div>
+        <div class="card"><h4>PERF_EVENT_ARRAY <span class="loc">predecessor</span></h4><p>The older per-CPU event
+          channel. Ring buffer superseded it (one shared buffer, ordering, less copying) on kernels ≥ 5.8.</p></div>
+        <div class="card"><h4>PROG_ARRAY / maps-of-maps</h4><p>Tail calls and nesting — programs that jump to other
+          programs. Power tools; not needed for our path.</p></div>
+        <div class="card"><h4>SK_STORAGE / TASK_STORAGE</h4><p>Storage <i>attached</i> to a socket or task lifetime —
+          the kernel frees it when the object dies. Elegant for per-flow state.</p></div>
+      </div>
+      <p class="cap">Why a ring buffer for us: <code class="inl">connect()</code> events are a <i>stream</i>, order
+        matters, and we want backpressure (drop, don't corrupt) when userspace stalls.</p>
+    </div>
+  </section>
+
+  <!-- 7 ─ The verifier (sim placeholder; full sim in Pass 2) ────────────── -->
+  <section class="slide" data-title="The verifier" data-act="II · The machine">
+    <div class="wrap">
+      <p class="kick">The reason any of this is safe</p>
+      <h2>The verifier proves your program before the kernel will run it</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Loading a program isn't "trust me." The kernel <b class="hl">statically proves</b> three
+            things by walking every path through your instructions:</p>
+          <ul class="clean">
+            <li><b>It terminates</b> — a DAG with bounded loops only; no way to hang the kernel.</li>
+            <li><b>Memory safety</b> — every pointer is tracked with known bounds; no read/write escapes its object.</li>
+            <li><b>No leaks</b> — resources you acquire (a reserved ring-buffer slot) must be released on
+              <i>every</i> exit path.</li>
+          </ul>
+          <p class="small muted">It does this by simulating execution: for each instruction it tracks the <i>type and
+            range</i> of every register, forking its analysis at branches. Reject → your program never loads.</p>
+        </div>
+        <div>
+          <div class="ix">
+            <div class="ixhead"><span class="pill">drive it</span><h4>Verifier stepper — reference accounting</h4></div>
+            <div class="seg" id="vfMode" style="margin-bottom:9px">
+              <button class="btn on" data-m="good">read → reserve (correct)</button>
+              <button class="btn" data-m="bad">reserve first (buggy)</button>
+            </div>
+            <div class="vfsteps" id="vfSteps"></div>
+            <div class="vfstate" id="vfState"></div>
+            <div class="controls">
+              <button class="btn primary" id="vfStep">Step ▸</button>
+              <button class="btn" id="vfRun">Run ▶</button>
+              <button class="btn" id="vfReset">Reset</button>
+            </div>
+          </div>
+          <p class="cap">Flip to <b>"reserve first"</b> and step to the early return — the same rejection that shaped
+            NetWatch's real program. This is also why a sandbox can drop <code class="inl">CAP_BPF</code> after load.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 ─ Helpers + GPL ─────────────────────────────────────────────────── -->
+  <section class="slide" data-title="Helpers &amp; the GPL gate" data-act="II · The machine">
+    <div class="wrap">
+      <p class="kick">How sandboxed code reaches the kernel</p>
+      <h2>Helpers are the syscall table for eBPF — and some are GPL-only</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Your program can't just dereference kernel pointers or call kernel functions. It calls a
+            fixed, audited set of <b class="hl">helpers</b> — and, on modern kernels, <b class="hl">kfuncs</b>. Each is
+            vetted for the verifier's safety model.</p>
+          <ul class="clean">
+            <li><code class="inl">bpf_probe_read_kernel()</code> — safely copy from a kernel address (faults become
+              errors, not panics).</li>
+            <li><code class="inl">bpf_get_current_pid_tgid()</code> / <code class="inl">_comm()</code> — who is running
+              right now.</li>
+            <li><code class="inl">bpf_ktime_get_ns()</code> — a monotonic timestamp.</li>
+            <li><code class="inl">bpf_ringbuf_reserve/submit()</code> — the map ops behind aya's
+              <code class="inl">reserve()/submit()</code>.</li>
+          </ul>
+        </div>
+        <div>
+          <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>ebpf-programs/src/main.rs</span></div><div data-rust><script type="text/plain">// GPL-only helpers (bpf_probe_read_kernel,
+// bpf_ktime_get_ns, …) require a GPL-compatible
+// license, read from the `license` ELF section
+// at load. Missing it fails with a *misleading*
+// "Invalid ELF header" error.
+#[no_mangle]
+#[link_section = "license"]
+pub static LICENSE: [u8; 4] = *b"GPL\0";</script></div></div>
+          <p class="cap">A real footgun: forget this 4-byte section and the load fails with an error that points
+            nowhere near the cause. NetWatch documents it in the source so the next person doesn't lose an afternoon.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 ─ BTF / CO-RE ───────────────────────────────────────────────────── -->
+  <section class="slide" data-title="BTF &amp; CO-RE" data-act="II · The machine">
+    <div class="wrap">
+      <p class="kick">Compile once, run on many kernels</p>
+      <h2>BTF describes kernel types; CO-RE relocates against them at load</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A <code class="inl">struct sock</code>'s field offsets differ between kernel builds. Hardcode
+            them and your program is wrong on the next box. The fix is two pieces:</p>
+          <ul class="clean">
+            <li><b>BTF</b> (BPF Type Format) — compact type info for the running kernel, shipped at
+              <code class="inl">/sys/kernel/btf/vmlinux</code>.</li>
+            <li><b>CO-RE</b> (Compile Once – Run Everywhere) — your object carries <i>relocations</i> like "offset of
+              field X"; the loader patches them against the target's BTF at load time.</li>
+          </ul>
+          <p class="small muted">The result: one <code class="inl">.o</code> that adapts, instead of a build per kernel
+            (the old BCC model that shipped Clang to every machine).</p>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node b">your .o + CO-RE relocations</div><div class="down">↓</div>
+            <div class="node">loader reads target BTF (/sys/kernel/btf/vmlinux)</div><div class="down">↓</div>
+            <div class="node y">patch every "field offset" to THIS kernel</div><div class="down">↓</div>
+            <div class="node g">verifier-ready, kernel-correct bytecode</div>
+          </div>
+          <p class="cap">NetWatch's Phase-1 program reads a <i>copied-in</i> <code class="inl">sockaddr</code> at fixed,
+            ABI-stable offsets, so it leans on CO-RE less than a program chasing <code class="inl">struct sock</code>
+            internals would — but the same machinery is what makes the eBPF Phase-2 hooks portable.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10 ─ Toolchain landscape ──────────────────────────────────────────── -->
+  <section class="slide" data-title="Toolchains" data-act="III · Toolchain &amp; lifecycle">
+    <div class="wrap">
+      <p class="kick">Four ways to write the same bytecode</p>
+      <h2>Why NetWatch writes its kernel code in Rust (aya)</h2>
+      <div class="grid2">
+        <div class="card"><h4>BCC</h4><p>Python/C, compiles BPF <i>on the target</i> with embedded Clang. Great for
+          ad-hoc tracing; heavy to ship (an LLVM toolchain on every user's machine).</p></div>
+        <div class="card"><h4>libbpf + C</h4><p>The canonical modern path. C source, CO-RE, a small loader library.
+          Battle-tested; but it's a second language and build system bolted onto a Rust project.</p></div>
+        <div class="card"><h4>bpftrace</h4><p>A high-level DSL for one-liners and scripts. Perfect for exploration,
+          not for embedding a long-lived program inside a product.</p></div>
+        <div class="card"><h4>aya (Rust) <span class="loc">← us</span></h4><p>Kernel <i>and</i> userspace in Rust, no
+          libbpf/C dependency, CO-RE supported. One language, one toolchain, one build — it disappears into the
+          NetWatch tree.</p></div>
+      </div>
+      <p class="lede small" style="margin-top:14px;max-width:84ch">The deciding factor for a Rust product isn't raw
+        capability — all four emit the same verified bytecode. It's <b class="hl">cohesion</b>: aya lets the kernel
+        program share types with userspace (one <code class="inl">#[repr(C)]</code> struct, both sides) and build with
+        <code class="inl">cargo</code>, no foreign toolchain to vendor or teach contributors.</p>
+      <p class="cap">Trade-off acknowledged: aya's ecosystem is younger than libbpf's, and you write some
+        <code class="inl">unsafe</code> by hand that libbpf's CO-RE macros would hide. NetWatch judged the cohesion
+        worth it.</p>
+    </div>
+  </section>
+
+  <!-- 11 ─ The build ────────────────────────────────────────────────────── -->
+  <section class="slide" data-title="The build" data-act="III · Toolchain &amp; lifecycle">
+    <div class="wrap">
+      <p class="kick">From Rust source to an embeddable object</p>
+      <h2>A freestanding binary for a target with no operating system</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">The kernel program compiles to <code class="inl">bpfel-unknown-none</code> — little-endian
+            BPF, <i>no OS</i>. That constraint explains every odd line at the top of the file:</p>
+          <ul class="clean">
+            <li><code class="inl">#![no_std]</code> — no standard library; there's no allocator or syscalls down here.</li>
+            <li><code class="inl">#![no_main]</code> — the kernel calls your hook, not a <code class="inl">main()</code>.</li>
+            <li>a <code class="inl">#[panic_handler]</code> — required for <code class="inl">no_std</code>; it just
+              loops, because there's nothing to panic <i>to</i>.</li>
+          </ul>
+          <p class="small muted">Output: <code class="inl">netwatch_sdk_ebpf.o</code>, an ELF object of BPF bytecode +
+            map definitions + that license section.</p>
+        </div>
+        <div>
+          <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>top of the kernel crate</span></div><div data-rust><script type="text/plain">#![no_std]
+#![no_main]
+
+use aya_ebpf::{
+    helpers::{bpf_get_current_comm,
+              bpf_get_current_pid_tgid,
+              bpf_ktime_get_ns},
+    macros::{kprobe, map},
+    maps::RingBuf,
+    programs::ProbeContext,
+};
+
+#[cfg(not(test))]
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }</script></div></div>
+          <p class="cap">Built by <code class="inl">scripts/build-ebpf.sh</code>, then copied to
+            <code class="inl">target/bpf/netwatch_sdk_ebpf.o</code> so the userspace crate can swallow it whole
+            (next slide).</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 12 ─ Load & attach lifecycle ──────────────────────────────────────── -->
+  <section class="slide" data-title="Load &amp; attach" data-act="III · Toolchain &amp; lifecycle">
+    <div class="wrap">
+      <p class="kick">What actually happens at startup</p>
+      <h2>ELF bytes → <code class="inl">bpf()</code> syscall → verify → JIT → attach</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">The <code class="inl">.o</code> is baked into the userspace binary with
+            <code class="inl">include_bytes!</code> — no file to ship or lose. At runtime aya walks it through the
+            kernel's loading protocol:</p>
+          <div class="flowv" style="margin-top:6px">
+            <div class="node b">include_bytes!(…/netwatch_sdk_ebpf.o)</div><div class="down">↓</div>
+            <div class="node">aya parses ELF: programs, maps, relocations, license</div><div class="down">↓</div>
+            <div class="node y">bpf(BPF_MAP_CREATE) — ring buffer gets an fd</div><div class="down">↓</div>
+            <div class="node k">bpf(BPF_PROG_LOAD) — kernel VERIFIES, then JITs</div><div class="down">↓</div>
+            <div class="node g">attach kprobe to tcp_v4_connect — now live</div>
+          </div>
+        </div>
+        <div>
+          <p class="lede small">Two things worth internalizing:</p>
+          <ul class="clean">
+            <li><b>Everything is a file descriptor.</b> The loaded program and the map are <code class="inl">fd</code>s
+              the process owns. Close them and the kernel tears down the attachment — which is exactly how NetWatch's
+              <code class="inl">Drop</code> detaches cleanly.</li>
+            <li><b>Verification happens at load, once.</b> The expensive proof is paid at
+              <code class="inl">PROG_LOAD</code>; after that the JITed code runs at native speed on every event.</li>
+          </ul>
+          <p class="cap">This is also where it can fail in the field — missing <code class="inl">CAP_BPF</code>, a
+            kernel that rejects the probe, no BTF. NetWatch surfaces each as
+            <code class="inl">EbpfStatus::Unavailable</code> rather than crashing (Act&nbsp;V).</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13 ─ ABI contract + struct visualizer (INTERACTIVE) ───────────────── -->
+  <section class="slide" data-title="The ABI contract" data-act="IV · The real program">
+    <div class="wrap">
+      <p class="kick">crates/common/src/lib.rs · shared by both sides</p>
+      <h2>One <code class="inl">#[repr(C)]</code> struct, agreed byte-for-byte</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">The kernel program <i>writes</i> these bytes; userspace <i>reads</i> them out of the same
+            ring-buffer slot. There's no serialization — it's raw memory. So the layout must be <b class="hl">identical
+            and predictable</b> on both sides.</p>
+          <ul class="clean">
+            <li><code class="inl">#[repr(C)]</code> pins field order &amp; C alignment — no Rust field reordering.</li>
+            <li><b><code class="inl">_pad0: [u8; 3]</code></b> is explicit padding: it pushes <code class="inl">tgid</code>
+              to offset 4 so the <code class="inl">u32</code> is naturally aligned. Leave it out and the compiler inserts
+              <i>silent</i> padding — fine until the two sides disagree.</li>
+            <li>All address fields stay in <b>network byte order</b>; userspace converts on decode.</li>
+          </ul>
+          <p class="small muted">Click a field to see exactly which bytes it owns. Then break it →</p>
+        </div>
+        <div>
+          <div class="ix">
+            <div class="ixhead"><span class="pill">interactive</span><h4>ConnectV4Event — 48 bytes</h4></div>
+            <div class="bytegrid" id="bgrid"></div>
+            <div class="seg" id="bfields" style="margin-top:11px"></div>
+            <div class="controls">
+              <button class="btn" id="bToggle">Remove _pad0 (pack it)</button>
+              <span class="small" id="bWarn" style="margin-left:6px"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="cap">This struct is the seam between kernel and userspace. Get its layout wrong and every field downstream
+        is garbage — silently.</p>
+    </div>
+  </section>
+
+  <!-- 14 ─ The kprobe, line by line (annotated) ─────────────────────────── -->
+  <section class="slide" data-title="The kprobe, line by line" data-act="IV · The real program">
+    <div class="wrap">
+      <p class="kick">ebpf-programs/src/main.rs · the program itself</p>
+      <h2>Read what you need, then build the event</h2>
+      <div class="cols">
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>#[kprobe] tcp_v4_connect</span></div><div data-rust><script type="text/plain">#[kprobe]
+pub fn tcp_v4_connect(ctx: ProbeContext) -> u32 {
+    match try_tcp_v4_connect(ctx) {
+        Ok(_)  => 0,
+        Err(_) => 1,
+    }
+}
+
+fn try_tcp_v4_connect(ctx: ProbeContext)
+    -> Result<(), i64>
+{
+    // arg(1) = struct sockaddr_in *uaddr (dest)
+    let uaddr: *const u8 = ctx.arg(1).ok_or(1i64)?;
+
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let tgid = (pid_tgid >> 32) as u32;
+    let pid  = pid_tgid as u32;
+    let comm = bpf_get_current_comm()
+        .unwrap_or([0u8; COMM_LEN]);
+    let timestamp_ns =
+        unsafe { bpf_ktime_get_ns() };
+
+    // sockaddr_in: sin_port @0x02, sin_addr @0x04
+    let dport = unsafe { bpf_probe_read_kernel
+        ::<u16>(uaddr.add(0x02) as *const u16) }
+        .unwrap_or(0);
+    let daddr = unsafe { bpf_probe_read_kernel
+        ::<u32>(uaddr.add(0x04) as *const u32) }
+        .unwrap_or(0);
+    let saddr: u32 = 0;   // not assigned yet
+    let sport: u16 = 0;   // (see next slide)</script></div></div>
+        <div>
+          <p class="lede">Every line is doing one of three jobs:</p>
+          <ul class="clean">
+            <li><b>Get the context</b> — <code class="inl">ProbeContext</code> is the kprobe's window onto the probed
+              function's registers. <code class="inl">ctx.arg(1)</code> is the second argument,
+              <code class="inl">struct sockaddr *uaddr</code>.</li>
+            <li><b>Ask the kernel via helpers</b> — pid/tgid, comm, and a timestamp come from helpers, not from poking
+              memory. Safe by construction.</li>
+            <li><b>Carefully read kernel memory</b> — <code class="inl">bpf_probe_read_kernel</code> copies the
+              destination port and address out of <code class="inl">uaddr</code> at the
+              <code class="inl">sockaddr_in</code> offsets, fault-safe.</li>
+          </ul>
+          <p class="small muted">Notice <code class="inl">saddr</code> and <code class="inl">sport</code> are hardcoded
+            to <code class="inl">0</code>. That's not laziness — it's a fact about <i>when</i> this code runs. Which is
+            the whole next slide.</p>
+          <p class="cap">Why read <code class="inl">uaddr</code> and not the socket? Because of a bug that made eBPF
+            attribution silently return nothing — issue&nbsp;#38. →</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 15 ─ #38 timeline (MARQUEE INTERACTIVE) ───────────────────────────── -->
+  <section class="slide" data-title="War story: issue #38" data-act="IV · The real program">
+    <div class="wrap">
+      <p class="kick">When you read decides what you see</p>
+      <h2>At kprobe entry, the socket isn't filled in yet</h2>
+      <p class="lede" style="max-width:84ch">A kprobe on <code class="inl">tcp_v4_connect</code> fires at
+        <b class="hl">function entry</b> — before its body runs. The earlier version read the socket's own fields
+        (<code class="inl">skc_daddr</code>, <code class="inl">skc_dport</code>) there and got <b class="hl">all
+        zeros</b>: the kernel only populates them <i>later</i>, during routing. Every event was discarded; attribution
+        silently never worked. Scrub the timeline and watch what's readable when.</p>
+
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4>Execution of tcp_v4_connect(sk, uaddr, len)</h4></div>
+        <input type="range" id="tlRange" min="0" max="4" value="1" step="1" style="width:100%;accent-color:var(--mauve)">
+        <div class="tlmarks" id="tlMarks"></div>
+        <div class="cols" style="margin-top:14px;gap:20px">
+          <div class="tlpanel" id="tlUaddr"></div>
+          <div class="tlpanel" id="tlSock"></div>
+        </div>
+        <div class="tlverdict" id="tlVerdict"></div>
+      </div>
+      <p class="cap">The fix: read the destination from <code class="inl">uaddr</code> (valid at entry, copied in by the
+        syscall layer), and accept that source addr/port aren't known yet → key attribution on
+        <code class="inl">(daddr, dport)</code>.</p>
+    </div>
+  </section>
+
+  <!-- 16 ─ The verifier dance ───────────────────────────────────────────── -->
+  <section class="slide" data-title="The verifier dance" data-act="IV · The real program">
+    <div class="wrap">
+      <p class="kick">Why the reads come before the reserve</p>
+      <h2>A reserved slot is a reference you must always release</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Look back at the program's ordering: it reads <i>every</i> field first, and only then reserves
+            the ring-buffer slot. That order isn't taste — the <b class="hl">verifier requires it</b>.</p>
+          <p class="small muted" style="margin-top:6px">Once you call <code class="inl">reserve()</code> you hold a
+            reference. The verifier proves that on <i>every</i> path to <code class="inl">BPF_EXIT</code>, that reference
+            is released (<code class="inl">submit</code> or <code class="inl">discard</code>). An early
+            <code class="inl">return</code> after a reserve — e.g. a read that failed — is a leak, and the program is
+            rejected. So: do everything fallible <i>before</i> you reserve.</p>
+          <p class="small">Flip the toggle in the stepper on <b>"The verifier" (slide 7)</b> to watch the real
+            rejection fire. Here's the rule in the source's own words →</p>
+        </div>
+        <div>
+          <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>main.rs — the comment that encodes the rule</span></div><div data-rust><script type="text/plain">// Pull every field we need BEFORE reserving the
+// ring-buffer entry. Reserving creates a resource
+// the BPF verifier insists we release on every exit
+// path (submit or discard). If we reserve up front
+// and then bail on a read failure, the verifier
+// rejects the program with:
+//   "Unreleased reference ... BPF_EXIT would lead
+//    to reference leak".
+
+let Some(mut entry) =
+    EVENTS.reserve::<ConnectV4Event>(0)
+else { return Err(0); };
+// no early returns past this point — only
+// submit() or discard() on every path.</script></div></div>
+          <p class="cap">The verifier turns a whole class of resource-leak bugs into a <i>compile-time</i> "no." You
+            either structure the code correctly or it never loads.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 17 ─ Ring buffer (INTERACTIVE) ────────────────────────────────────── -->
+  <section class="slide" data-title="The ring buffer" data-act="IV · The real program">
+    <div class="wrap">
+      <p class="kick">256 KiB of shared, ordered, lossy-by-design queue</p>
+      <h2>reserve → write → submit, with backpressure</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">The ring buffer is the conveyor belt from kernel to userspace. The program
+            <code class="inl">reserve()</code>s a slot, <code class="inl">write()</code>s the event into it, and
+            <code class="inl">submit(0)</code>s — the <code class="inl">0</code> flag meaning "wake a polling
+            consumer."</p>
+          <ul class="clean">
+            <li><b>Sized for bursts</b> — 256 KiB absorbs ~5k connect/sec for a few hundred ms if userspace stalls.</li>
+            <li><b>Lossy, not corrupting</b> — when it's full, <code class="inl">reserve()</code> returns
+              <code class="inl">None</code> and the event is <i>dropped</i>. Never a torn write.</li>
+            <li><b>Ordered &amp; multi-producer</b> — every CPU can submit; the consumer sees a single ordered stream.</li>
+          </ul>
+          <p class="small muted">Drive the producer and consumer and watch it fill, wake, and drop.</p>
+        </div>
+        <div>
+          <div class="ix">
+            <div class="ixhead"><span class="pill">interactive</span><h4>EVENTS: RingBuf (capacity 16 shown)</h4></div>
+            <div class="ringrow" id="ringRow"></div>
+            <div class="ringstat" id="ringStat"></div>
+            <div class="controls">
+              <button class="btn primary" id="ringProd">＋ Produce</button>
+              <button class="btn" id="ringCons">－ Consume</button>
+              <button class="btn" id="ringBurst">Burst ×8</button>
+              <button class="btn" id="ringAuto">▶ Auto</button>
+              <button class="btn" id="ringReset">Reset</button>
+            </div>
+          </div>
+          <p class="cap">The <code class="inl">submit(0)</code> wake is a latency/throughput knob:
+            <code class="inl">BPF_RB_NO_WAKEUP</code> trades immediacy for fewer wakeups once you know your consumer.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 18 ─ Userspace loader ─────────────────────────────────────────────── -->
+  <section class="slide" data-title="The userspace side" data-act="IV · The real program">
+    <div class="wrap">
+      <p class="kick">src/ebpf/source.rs · EventSource</p>
+      <h2>Load the object, attach the probe, drain to a channel</h2>
+      <div class="cols">
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>source.rs — load → attach → read (Linux+ebpf)</span></div><div data-rust><script type="text/plain">// the compiled .o, baked into the binary
+const BPF_OBJECT: &[u8] = include_bytes!(
+    concat!(env!("OUT_DIR"),
+            "/netwatch_sdk_ebpf.o"));
+
+let mut bpf = Bpf::load(BPF_OBJECT)?;     // verify+JIT
+
+// attach the kprobe by program name
+let prog: &mut KProbe =
+    bpf.program_mut("tcp_v4_connect")
+       .unwrap().try_into()?;
+prog.load()?;
+prog.attach("tcp_v4_connect", 0)?;
+
+// reader thread drains the ring buffer → mpsc
+let ring = RingBuf::try_from(
+    bpf.take_map("EVENTS").unwrap())?;
+thread::spawn(move || loop {
+    while let Some(item) = ring.next() {
+        tx.send(decode(&item)).ok();   // → Receiver
+    }
+});</script></div></div>
+        <div>
+          <p class="lede">Three moves, mirroring the kernel side:</p>
+          <ul class="clean">
+            <li><b>Embed, don't ship.</b> <code class="inl">include_bytes!</code> folds the
+              <code class="inl">.o</code> into the executable — nothing to install or path-resolve at runtime.</li>
+            <li><b>Attach by name.</b> aya finds the <code class="inl">tcp_v4_connect</code> program in the object,
+              loads it (verify + JIT), and attaches the kprobe.</li>
+            <li><b>Own the lifecycle via <code class="inl">fd</code>s.</b> The <code class="inl">Bpf</code> handle owns
+              the program and map; its <code class="inl">Drop</code> closes the fds and the kernel detaches the probe.
+              No explicit teardown.</li>
+          </ul>
+          <p class="small muted">Decoding flips the network-byte-order fields back and hands a typed
+            <code class="inl">EbpfEvent</code> to the rest of NetWatch over an <code class="inl">mpsc</code> channel.</p>
+          <p class="cap">On non-Linux, or without the <code class="inl">ebpf</code> feature, this whole path is a stub
+            returning <code class="inl">UnsupportedPlatform</code> — every other OS still compiles.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 19 ─ End-to-end player (MARQUEE INTERACTIVE) ──────────────────────── -->
+  <section class="slide" data-title="Trace one connect()" data-act="IV · The real program">
+    <div class="wrap">
+      <p class="kick">The whole vertical slice, one event</p>
+      <h2>From <code class="inl">connect()</code> to a process name on screen</h2>
+      <p class="lede" style="max-width:82ch">Everything so far, assembled. A browser opens a connection; seven steps
+        later NetWatch's Connections tab labels it with the owning process — something packet capture alone could never
+        do. Step through the real data as it transforms.</p>
+
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4>chrome → 142.250.72.4:443</h4></div>
+        <div class="e2e" id="e2e"></div>
+        <div class="e2epay" id="e2ePay"></div>
+        <div class="controls">
+          <button class="btn primary" id="e2ePlay">▶ Play</button>
+          <button class="btn" id="e2eStep">Step</button>
+          <button class="btn" id="e2eReset">Reset</button>
+          <span class="small muted" id="e2eNote" style="margin-left:6px"></span>
+        </div>
+      </div>
+      <p class="cap">The key insight made physical: attribution is keyed on <code class="inl">(daddr, dport)</code>
+        because that's the only stable identity available at kprobe entry. The #38 fix and this final label are the
+        same decision.</p>
+    </div>
+  </section>
+
+  <!-- 20 ─ Why it's safe to ship ────────────────────────────────────────── -->
+  <section class="slide" data-title="Why it's safe to ship" data-act="V · Safety &amp; frontiers">
+    <div class="wrap">
+      <p class="kick">Privilege you earn, then give back</p>
+      <h2>Three guarantees stack up to "safe in an end-user tool"</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Running code in the kernel sounds reckless for a TUI people install. It isn't, because the risky
+            parts are <b class="hl">proven done before the program runs</b> and the capability is <b class="hl">dropped
+            right after load</b>.</p>
+          <ul class="clean">
+            <li><b>The verifier</b> already proved termination, memory safety, and no leaks — a panic or hang isn't on
+              the table.</li>
+            <li><b>The GPL gate</b> keeps you to audited helpers; you can't call arbitrary kernel code.</li>
+            <li><b>The sandbox</b> drops <code class="inl">CAP_BPF</code> / <code class="inl">CAP_PERFMON</code> /
+              <code class="inl">CAP_NET_RAW</code> the instant load+attach finish — the program keeps running, but
+              nothing can load <i>another</i> one.</li>
+          </ul>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node k">startup — hold CAP_BPF (need it to load)</div><div class="down">↓</div>
+            <div class="node b">bpf(PROG_LOAD) — verifier proves the program</div><div class="down">↓</div>
+            <div class="node">attach kprobe · take ring-buffer fd</div><div class="down">↓</div>
+            <div class="node p">sandbox::apply() — DROP CAP_BPF + Landlock</div><div class="down">↓</div>
+            <div class="node g">run loop — probe still firing, privilege gone</div>
+          </div>
+          <p class="cap">This is the same "earn privilege, then drop it" arc as packet capture in NetWatch's sandbox —
+            eBPF just joins the list of things opened <i>before</i> the drop.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 21 ─ Limits & gotchas ─────────────────────────────────────────────── -->
+  <section class="slide" data-title="Limits &amp; gotchas" data-act="V · Safety &amp; frontiers">
+    <div class="wrap">
+      <p class="kick">What the model costs you</p>
+      <h2>The constraints are the price of the safety</h2>
+      <div class="grid2">
+        <div class="card"><h4>Kprobes are unstable contracts</h4><p>You're hooking an <i>internal</i> function. Its
+          signature or existence can change between kernels — which is why a tracepoint is preferred when one covers
+          your event.</p></div>
+        <div class="card"><h4>512-byte stack</h4><p>Tiny. Large structs go in a map (or per-CPU scratch), not on the
+          stack. The ring-buffer <code class="inl">reserve()</code> pattern also keeps the event out of stack space.</p></div>
+        <div class="card"><h4>No unbounded loops</h4><p>The verifier must prove termination. Bounded loops only;
+          anything it can't bound, it rejects. Some "obvious" code simply won't load.</p></div>
+        <div class="card"><h4>Helper / feature availability</h4><p>Ring buffers need kernel ≥ 5.8; some helpers are
+          newer still. Older kernels mean a different code path or a graceful "no."</p></div>
+        <div class="card"><h4>It can fail at attach</h4><p>Missing <code class="inl">CAP_BPF</code>, no BTF, a kernel
+          that refuses the probe. NetWatch reports these as state, never a crash →</p></div>
+        <div class="card"><h4>Verifier errors are cryptic</h4><p>"Invalid ELF header" for a missing license;
+          "reference leak" for a misordered reserve. Half of eBPF skill is reading these. This deck's war story is one
+          such scar.</p></div>
+      </div>
+      <p class="cap"><code class="inl">enum EbpfStatus { Active · Unavailable(reason) · NotCompiled }</code> — every
+        failure mode is a UI state, so the tool degrades instead of dying. Off by default; you opt in with
+        <code class="inl">--features ebpf</code>.</p>
+    </div>
+  </section>
+
+  <!-- 22 ─ Phase 2 frontier ─────────────────────────────────────────────── -->
+  <section class="slide" data-title="The Phase 2 frontier" data-act="V · Safety &amp; frontiers">
+    <div class="wrap">
+      <p class="kick">Where this goes next — and where you come in</p>
+      <h2>One kprobe today; full attribution tomorrow</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Phase 1 is a single IPv4 TCP kprobe. The roadmap's eBPF Phase 2 widens it until NetWatch can
+            <i>decrypt a QUIC flow <b class="hl">and</b> name the process that owns it</i> — something nothing else in
+            the category does end to end.</p>
+          <ul class="clean">
+            <li><code class="inl">tcp_v6_connect</code> — same story, IPv6.</li>
+            <li><b>UDP send path</b> — so QUIC (which NetWatch already decrypts) gets per-process attribution, not just
+              <code class="inl">/proc</code> guesses.</li>
+            <li><code class="inl">inet_sock_set_state</code> — catch flows by state transition, including short-lived
+              ones the connect-entry probe can miss.</li>
+          </ul>
+        </div>
+        <div>
+          <p class="lede small">Every one of these is the same question this deck has been answering, asked again:</p>
+          <div class="flowv" style="margin-top:8px">
+            <div class="node b">which hook sees this event?</div><div class="down">↓</div>
+            <div class="node y">what's actually populated when it fires?</div><div class="down">↓</div>
+            <div class="node p">what's the stable key for attribution?</div><div class="down">↓</div>
+            <div class="node g">read it before reserve, ship the event</div>
+          </div>
+          <p class="cap">Adding a hook means reading the same kernel networking source a netdev contributor reads — so
+            this is also a real on-ramp into upstream kernel work. The #38 timeline is the kind of question you'll keep
+            answering.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 23 ─ Recap ────────────────────────────────────────────────────────── -->
+  <section class="slide" data-title="What you just toured" data-act="Recap">
+    <div class="wrap">
+      <p class="kick">The whole map, once more</p>
+      <h2>From first principles to a process name on screen</h2>
+      <div class="grid2">
+        <div class="card"><h4>The model <span class="loc">Act I</span></h4><p>event → hook → verified program → map →
+          userspace. A kprobe at the one moment the kernel knows who owns a socket.</p></div>
+        <div class="card"><h4>The machine <span class="loc">Act II</span></h4><p>A tiny VM, maps as shared memory, and a
+          verifier that proves termination, memory safety, and no leaks before anything runs.</p></div>
+        <div class="card"><h4>The toolchain <span class="loc">Act III</span></h4><p>aya keeps kernel and userspace in
+          one Rust build; <code class="inl">no_std</code> object → <code class="inl">bpf()</code> → verify → JIT →
+          attach, all owned by fds.</p></div>
+        <div class="card"><h4>The real program <span class="loc">Act IV</span></h4><p>A <code class="inl">#[repr(C)]</code>
+          ABI, reads before the reserve, the #38 timing bug, and the ring buffer carrying one event to userspace.</p></div>
+        <div class="card"><h4>Safety <span class="loc">Act V</span></h4><p>Proven safe, GPL-gated, capability dropped
+          after load. Failure is a UI state, never a crash.</p></div>
+        <div class="card"><h4>Read the source</h4><p><code class="inl">crates/ebpf-programs/src/main.rs</code> ·
+          <code class="inl">crates/common/src/lib.rs</code> · <code class="inl">src/ebpf/source.rs</code>. ~250 lines,
+          now legible end to end.</p></div>
+      </div>
+      <p class="cap" style="margin-top:14px">Press <kbd>O</kbd> for the full map · <kbd>←</kbd> to revisit any
+        simulation. Next stop: add a hook (Act V) — or pick a BPF selftest and send your first kernel patch.</p>
+    </div>
+  </section>
+
+</main>
+
+<!-- ── Overview ───────────────────────────────────────────────────────────── -->
+<div id="overview"><h3>Jump to a stop — <span class="muted">click any, or press O to close</span></h3><div class="ovgrid" id="ovgrid"></div></div>
+
+<script>
+/* ── single-pass Rust tokenizer (escapes as it goes; never re-scans) ─────── */
+(function(){
+  var KW={pub:1,fn:1,let:1,mut:1,static:1,use:1,struct:1,enum:1,impl:1,match:1,return:1,
+    if:1,else:1,unsafe:1,const:1,as:1,Some:1,None:1,Ok:1,Err:1,for:1,in:1,loop:1,move:1,self:1,Self:1};
+  var TY={u8:1,u16:1,u32:1,u64:1,i64:1,usize:1,bool:1,RingBuf:1,ProbeContext:1,Result:1,Option:1,
+    Bpf:1,KProbe:1,ConnectV4Event:1,EventKind:1,PanicInfo:1,JoinHandle:1,Receiver:1,COMM_LEN:1,EVENTS:1};
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function span(cls,s){return '<span class="'+cls+'">'+esc(s)+'</span>';}
+  var idStart=/[A-Za-z_]/, idCont=/[A-Za-z0-9_]/, digit=/[0-9]/;
+  function hl(src){
+    var out='',i=0,n=src.length;
+    while(i<n){
+      var c=src[i];
+      if(c==='/'&&src[i+1]==='/'){ var j=src.indexOf('\n',i); if(j<0)j=n; out+=span('c',src.slice(i,j)); i=j; continue; }
+      if(c==='#'&&(src[i+1]==='['||(src[i+1]==='!'&&src[i+2]==='['))){ var k=src.indexOf(']',i); if(k<0)k=n-1; out+=span('attr',src.slice(i,k+1)); i=k+1; continue; }
+      if(c==='"'){ var j2=i+1; while(j2<n&&src[j2]!=='"'&&src[j2]!=='\n'){ if(src[j2]==='\\')j2++; j2++; } if(src[j2]==='"')j2++; out+=span('s',src.slice(i,j2)); i=j2; continue; }
+      if(idStart.test(c)){ var j3=i+1; while(j3<n&&idCont.test(src[j3]))j3++; var w=src.slice(i,j3);
+        out+= KW[w]?span('kw',w):(TY[w]?span('ty',w):esc(w)); i=j3; continue; }
+      if(digit.test(c)){ var j4=i+1; while(j4<n&&/[0-9a-fA-FxX_]/.test(src[j4]))j4++; out+=span('n',src.slice(i,j4)); i=j4; continue; }
+      out+=esc(c); i++;
+    }
+    return out;
+  }
+  document.querySelectorAll('[data-rust] script[type="text/plain"]').forEach(function(s){
+    var pre=document.createElement('pre'),code=document.createElement('code');
+    code.innerHTML=hl(s.textContent); pre.appendChild(code); s.parentNode.replaceChild(pre,s);
+  });
+})();
+
+/* ───────────────────────── deck engine ─────────────────────────────────── */
+var slides=[].slice.call(document.querySelectorAll('.slide'));
+var cur=0;
+var elProg=document.getElementById('progress'),elNum=document.getElementById('cnum'),
+    elTot=document.getElementById('ctot'),elAct=document.getElementById('act');
+elTot.textContent=String(slides.length).padStart(2,'0');
+
+function fit(slide){
+  var w=slide.querySelector('.wrap'); if(!w)return;
+  w.style.transform='translate(-50%,-50%) scale(1)';
+  var pad=54, vh=window.innerHeight-pad*2, vw=window.innerWidth-pad*2;
+  var r=w.getBoundingClientRect();
+  var s=Math.min(1, vw/r.width, vh/r.height);
+  w.style.transform='translate(-50%,-50%) scale('+s+')';
+}
+function fitActive(){ fit(slides[cur]); }
+function go(i){
+  i=Math.max(0,Math.min(slides.length-1,i));
+  if(i===cur && slides[cur].classList.contains('active')){fit(slides[cur]);return;}
+  slides[cur].classList.remove('active');
+  cur=i;
+  slides[cur].classList.add('active');
+  slides[cur].scrollTop=0;
+  elProg.style.width=((cur)/(slides.length-1)*100)+'%';
+  elNum.textContent=String(cur+1).padStart(2,'0');
+  elAct.textContent=slides[cur].getAttribute('data-act')||'';
+  location.hash=String(cur+1);
+  requestAnimationFrame(fitActive);
+  requestAnimationFrame(function(){requestAnimationFrame(fitActive);});
+  onEnter(cur);
+}
+window.addEventListener('keydown',function(e){
+  if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){go(cur+1);e.preventDefault();}
+  else if(e.key==='ArrowLeft'||e.key==='PageUp'){go(cur-1);e.preventDefault();}
+  else if(e.key==='Home'){go(0);}else if(e.key==='End'){go(slides.length-1);}
+  else if(e.key==='o'||e.key==='O'){toggleOverview();}
+  else if(e.key==='f'||e.key==='F'){fitActive();}
+  else if(e.key==='Escape'){document.getElementById('overview').classList.remove('open');}
+});
+window.addEventListener('resize',fitActive);
+
+/* overview */
+var ov=document.getElementById('overview'),ovg=document.getElementById('ovgrid');
+slides.forEach(function(s,i){
+  var d=document.createElement('div');d.className='ov';
+  d.innerHTML='<span class="num">'+String(i+1).padStart(2,'0')+'</span><span class="t">'+
+    (s.getAttribute('data-title')||'')+'<span class="az">'+(s.getAttribute('data-act')||'')+'</span></span>';
+  d.onclick=function(){go(i);toggleOverview();};
+  ovg.appendChild(d);
+});
+function toggleOverview(){ov.classList.toggle('open');}
+
+/* ───────────────────────── per-slide hooks ─────────────────────────────── */
+function onEnter(i){
+  var t=slides[i].getAttribute('data-title');
+  if(t==='The mental model') pipeReset();
+  else if(t==='The verifier') vfReset();
+  else if(t==='War story: issue #38') tlReset();
+  else if(t==='The ring buffer') ringReset();
+  else if(t==='Trace one connect()') e2eReset();
+}
+
+/* ── animated pipeline (slide 3) ─────────────────────────────────────────── */
+var pstages=[].slice.call(document.querySelectorAll('#pipe .pstage'));
+var pNotes=['A task calls connect() — the kernel is about to do real work.',
+  'The kprobe attached to tcp_v4_connect fires before the function body runs.',
+  'Your verified bytecode reads pid/comm/dest and builds an event.',
+  'The event is reserved + submitted into the 256 KiB ring buffer.',
+  'netwatch’s reader thread wakes, decodes, and attributes the flow. ✓'];
+var pIdx=-1,pTimer=null;
+function pipePaint(){pstages.forEach(function(s,k){s.classList.toggle('lit',k<=pIdx);});
+  document.getElementById('pipeNote').textContent = pIdx>=0?pNotes[pIdx]:'';}
+function pipeStep(){if(pIdx<pstages.length-1){pIdx++;pipePaint();}return pIdx<pstages.length-1;}
+function pipeReset(){if(pTimer){clearInterval(pTimer);pTimer=null;}pIdx=-1;pipePaint();
+  var b=document.getElementById('pipePlay');if(b)b.textContent='▶ Play';}
+function pipePlay(){
+  var b=document.getElementById('pipePlay');
+  if(pTimer){clearInterval(pTimer);pTimer=null;b.textContent='▶ Play';return;}
+  if(pIdx>=pstages.length-1)pipeReset();
+  b.textContent='❚❚ Pause';
+  pTimer=setInterval(function(){ if(!pipeStep()){clearInterval(pTimer);pTimer=null;b.textContent='↻ Replay';} },820);
+}
+document.getElementById('pipePlay').onclick=pipePlay;
+document.getElementById('pipeStep').onclick=function(){if(pTimer){clearInterval(pTimer);pTimer=null;document.getElementById('pipePlay').textContent='▶ Play';}pipeStep();};
+document.getElementById('pipeReset').onclick=pipeReset;
+
+/* ── instruction decoder (slide 5) ───────────────────────────────────────── */
+var INSNS=[
+  {name:'mov r0, 0', asm:'<span class="mn">mov64</span> <span class="reg">r0</span>, <span class="lit">0</span>',
+   op:'0xb7',dst:'0',src:'0',off:'0x0000',imm:'0x00000000',
+   ex:{op:'<b>0xb7</b> = BPF_ALU64 | BPF_MOV | BPF_K. 64-bit move, immediate source. The opcode byte packs class, operation, and source-mode into 8 bits.',
+       dst:'<b>dst = r0</b>. The destination register, 4 bits (16 possible). r0 holds the program’s return value, so this is "set return = 0".',
+       src:'<b>src = 0</b>. Unused here — the source is an immediate (BPF_K), not a register, so this nibble stays 0.',
+       off:'<b>offset = 0</b>. A signed 16-bit displacement used by jumps and memory ops. A plain mov ignores it.',
+       imm:'<b>imm = 0</b>. The 32-bit immediate — the literal value being moved into r0. This is the "0" in "mov r0, 0".'}},
+  {name:'exit', asm:'<span class="mn">exit</span>',
+   op:'0x95',dst:'0',src:'0',off:'0x0000',imm:'0x00000000',
+   ex:{op:'<b>0x95</b> = BPF_JMP | BPF_EXIT. Return from the program; r0 is the return value. Every path must reach one of these.',
+       dst:'<b>dst = 0</b>. Unused by exit.',src:'<b>src = 0</b>. Unused by exit.',
+       off:'<b>offset = 0</b>. Unused by exit.',imm:'<b>imm = 0</b>. Unused by exit — the return value comes from r0, set by a prior instruction.'}},
+  {name:'jeq r1, 0, +2', asm:'<span class="mn">jeq</span> <span class="reg">r1</span>, <span class="lit">0</span>, <span class="lit">+2</span>',
+   op:'0x15',dst:'1',src:'0',off:'0x0002',imm:'0x00000000',
+   ex:{op:'<b>0x15</b> = BPF_JMP | BPF_JEQ | BPF_K. "Jump if equal to immediate." This is a branch — the verifier forks its analysis here, exploring both the taken and not-taken paths.',
+       dst:'<b>dst = r1</b>. The register being compared. On entry r1 is the context pointer.',
+       src:'<b>src = 0</b>. Source-mode is immediate (BPF_K), so no source register.',
+       off:'<b>offset = +2</b>. The branch target: skip 2 instructions if r1 == 0. This signed 16-bit field is what makes control flow — and what the verifier must prove always lands somewhere valid.',
+       imm:'<b>imm = 0</b>. The value r1 is compared against.'}},
+  {name:'call bpf_ktime_get_ns', asm:'<span class="mn">call</span> <span class="lit">5</span>',
+   op:'0x85',dst:'0',src:'0',off:'0x0000',imm:'0x00000005',
+   ex:{op:'<b>0x85</b> = BPF_JMP | BPF_CALL. Call a helper by number. The verifier checks the helper is allowed for this program type and that args in r1–r5 match its signature.',
+       dst:'<b>dst = 0</b>. Unused.',src:'<b>src = 0</b>. 0 = call a <i>helper</i> by id (a different src mode means call another BPF function/kfunc).',
+       off:'<b>offset = 0</b>. Unused by call.',
+       imm:'<b>imm = 5</b>. Helper id 5 = bpf_ktime_get_ns. After the call its result is in r0 — exactly the timestamp NetWatch stamps onto each event.'}}
+];
+var iSel=0,fSel='op';
+var pick=document.getElementById('insnPick');
+INSNS.forEach(function(ins,k){var b=document.createElement('button');b.className='btn'+(k===0?' on':'');
+  b.textContent=ins.name;b.onclick=function(){iSel=k;fSel='op';renderInsn();
+    [].forEach.call(pick.children,function(c,j){c.classList.toggle('on',j===k);});};pick.appendChild(b);});
+function renderInsn(){
+  var ins=INSNS[iSel];
+  document.getElementById('insnAsm').innerHTML='&gt; '+ins.asm;
+  var fields=[['op','opcode',ins.op],['dst','dst',ins.dst],['src','src',ins.src],['off','offset',ins.off],['imm','imm',ins.imm]];
+  var html='';fields.forEach(function(f){html+='<div class="f '+f[0]+(f[0]===fSel?' sel':'')+'" data-f="'+f[0]+'"><div class="fb">'+f[2]+'</div><div class="fl">'+f[1]+'</div></div>';});
+  var bits=document.getElementById('insnBits');bits.innerHTML=html;
+  [].forEach.call(bits.children,function(c){c.onclick=function(){fSel=c.getAttribute('data-f');renderInsn();};});
+  document.getElementById('insnExplain').innerHTML=ins.ex[fSel];
+}
+renderInsn();
+
+/* ── verifier stepper (slide 7) ──────────────────────────────────────────── */
+var VF={
+  good:{steps:[
+    {x:'r1', t:'r1 = ctx', d:'context ptr', r:0},
+    {x:'?',  t:'uaddr = ctx.arg(1)?', d:'fallible · exit refs=0 ✓', r:0},
+    {x:'fn', t:'pid/tgid/comm/ts = helpers()', d:'refs=0', r:0},
+    {x:'rd', t:'dport,daddr = probe_read(uaddr)', d:'fault-safe · refs=0', r:0},
+    {x:'⚑', t:'entry = EVENTS.reserve()?', d:'acquire ref · 0→1', r:1},
+    {x:'wr', t:'entry.write(event)', d:'refs=1', r:1},
+    {x:'✓', t:'entry.submit(0)', d:'release · 1→0', r:0},
+    {x:'⏚', t:'EXIT  Ok(())', d:'refs==0 on this path', r:0, exit:1,
+       verdict:{cls:'good',msg:'✓ ACCEPTED — every exit path releases all references.'}}
+  ]},
+  bad:{steps:[
+    {x:'r1', t:'r1 = ctx', d:'context ptr', r:0},
+    {x:'⚑', t:'entry = EVENTS.reserve()?', d:'reserve up front · 0→1', r:1},
+    {x:'⚠', t:'uaddr = ctx.arg(1)?', d:'fallible AFTER reserve', r:1},
+    {x:'⏚', t:'EXIT  (early return Err)', d:'this path still holds the slot', r:1, exit:1,
+       verdict:{cls:'bad',msg:'✗ REJECTED: "Unreleased reference id=1 … BPF_EXIT would lead to reference leak." An exit path leaves refs=1.'}}
+  ]}
+};
+var vfMode='good', vfIdx=-1, vfTimer=null;
+var elVfSteps=document.getElementById('vfSteps'), elVfState=document.getElementById('vfState');
+function vfRender(){
+  var steps=VF[vfMode].steps, html='';
+  steps.forEach(function(s,k){
+    var cls=k<vfIdx?'done':(k===vfIdx?'cur':'');
+    html+='<div class="ln '+cls+'"><span class="lx">'+s.x+'</span><span>'+s.t+'</span><span class="ld">'+s.d+'</span></div>';
+  });
+  elVfSteps.innerHTML=html;
+  var refs = vfIdx>=0 ? steps[Math.min(vfIdx,steps.length-1)].r : 0;
+  var st='<span class="refs">held references: <b>'+refs+'</b></span>';
+  var cur=steps[vfIdx];
+  if(cur&&cur.exit&&cur.verdict){ st+='<span class="vd '+cur.verdict.cls+'">'+cur.verdict.msg+'</span>'; }
+  elVfState.innerHTML=st;
+}
+function vfStep(){var n=VF[vfMode].steps.length; if(vfIdx<n-1){vfIdx++;vfRender();} return vfIdx<n-1;}
+function vfReset(){ if(vfTimer){clearInterval(vfTimer);vfTimer=null;} vfIdx=-1; vfRender(); }
+function vfRun(){ if(vfTimer){clearInterval(vfTimer);vfTimer=null;return;} if(vfIdx>=VF[vfMode].steps.length-1)vfReset();
+  vfTimer=setInterval(function(){ if(!vfStep()){clearInterval(vfTimer);vfTimer=null;} },700); }
+document.getElementById('vfStep').onclick=function(){ if(vfTimer){clearInterval(vfTimer);vfTimer=null;} vfStep(); };
+document.getElementById('vfRun').onclick=vfRun;
+document.getElementById('vfReset').onclick=vfReset;
+[].forEach.call(document.querySelectorAll('#vfMode .btn'),function(b){
+  b.onclick=function(){ vfMode=b.getAttribute('data-m');
+    [].forEach.call(document.querySelectorAll('#vfMode .btn'),function(c){c.classList.toggle('on',c===b);});
+    vfReset(); };
+});
+vfRender();
+
+/* ── struct byte-grid (slide 13) ─────────────────────────────────────────── */
+var BF_PAD=[
+  {k:'kind', off:0,  len:1,  cls:'bf-kind', label:'kind u8'},
+  {k:'pad',  off:1,  len:3,  cls:'bf-pad',  label:'_pad0 [u8;3]'},
+  {k:'tgid', off:4,  len:4,  cls:'bf-tgid', label:'tgid u32'},
+  {k:'pid',  off:8,  len:4,  cls:'bf-pid',  label:'pid u32'},
+  {k:'saddr',off:12, len:4,  cls:'bf-saddr',label:'saddr u32'},
+  {k:'daddr',off:16, len:4,  cls:'bf-daddr',label:'daddr u32'},
+  {k:'sport',off:20, len:2,  cls:'bf-sport',label:'sport u16'},
+  {k:'dport',off:22, len:2,  cls:'bf-dport',label:'dport u16'},
+  {k:'comm', off:24, len:16, cls:'bf-comm', label:'comm [u8;16]'},
+  {k:'ts',   off:40, len:8,  cls:'bf-ts',   label:'timestamp_ns u64'}
+];
+function bfPacked(){ // same fields, no pad, recompute offsets → exposes misalignment
+  var o=0, out=[];
+  BF_PAD.forEach(function(f){ if(f.k==='pad')return; out.push({k:f.k,off:o,len:f.len,cls:f.cls,label:f.label}); o+=f.len; });
+  return out;
+}
+var bPad=true, bSel=null;
+var elBgrid=document.getElementById('bgrid'), elBfields=document.getElementById('bfields'),
+    elBwarn=document.getElementById('bWarn'), elBtoggle=document.getElementById('bToggle');
+function bAt(layout,i){ for(var j=0;j<layout.length;j++){var f=layout[j]; if(i>=f.off&&i<f.off+f.len)return f;} return null; }
+function bRender(){
+  var layout=bPad?BF_PAD:bfPacked();
+  var total=layout.reduce(function(m,f){return Math.max(m,f.off+f.len);},0);
+  var html='';
+  for(var i=0;i<total;i++){
+    var f=bAt(layout,i); var cls=f?f.cls:'';
+    var bad = !bPad && f && f.k!=='comm' && (f.off % f.len)!==0; // u16/u32/u64 not naturally aligned
+    var dim = bSel && (!f || f.k!==bSel);
+    html+='<div class="by '+cls+(f&&f.k==='pad'?' pad':'')+(bad?' bad':'')+(dim?' dim':'')+'" title="byte '+i+(f?' · '+f.label:'')+'"></div>';
+  }
+  elBgrid.innerHTML=html;
+  // legend
+  var leg='';
+  layout.filter(function(f){return f.k!=='pad';}).forEach(function(f){
+    var swc=getComputedStyle(document.documentElement); // not needed; use class swatch
+    leg+='<button class="btn'+(bSel===f.k?' on':'')+'" data-k="'+f.k+'"><span class="sw '+f.cls+'"></span>'+f.label+' <span style="color:var(--overlay)">@'+f.off+'</span></button>';
+  });
+  elBfields.innerHTML=leg;
+  [].forEach.call(elBfields.children,function(c){ c.onclick=function(){ var k=c.getAttribute('data-k'); bSel=(bSel===k?null:k); bRender(); }; });
+  elBtoggle.textContent = bPad ? 'Remove _pad0 (pack it)' : 'Restore _pad0';
+  elBwarn.innerHTML = bPad
+    ? '<span style="color:var(--overlay)">48 bytes · all fields naturally aligned</span>'
+    : '<span style="color:var(--red)">⚠ tgid now @1, daddr @13, ts @37 — misaligned. The kernel writer and userspace reader no longer agree. Silent corruption.</span>';
+}
+elBtoggle.onclick=function(){ bPad=!bPad; bSel=null; bRender(); };
+bRender();
+
+/* ── #38 timeline scrubber (slide 15) ────────────────────────────────────── */
+var TL=[
+  {m:'syscall copies<br>uaddr in',          entry:0, sockFilled:0, srcFilled:0,
+   v:{cls:'good',t:'The syscall layer has copied the user’s sockaddr into kernel memory. tcp_v4_connect hasn’t run yet.'}},
+  {m:'kprobe ENTRY<br>← reads here',          entry:1, sockFilled:0, srcFilled:0,
+   v:{cls:'bad', t:'⚑ The kprobe fires HERE, at function entry. uaddr is valid — but the socket’s own fields are still zero. The old code read the socket → all zeros → every event discarded (#38). Reading uaddr instead works.'}},
+  {m:'tcp_v4_connect<br>fills sock_common',   entry:0, sockFilled:1, srcFilled:0,
+   v:{cls:'good',t:'Now, inside the function, the kernel populates the socket’s destination fields. But our kprobe already ran at entry — too late to read them here.'}},
+  {m:'routing assigns<br>source addr/port',   entry:0, sockFilled:1, srcFilled:1,
+   v:{cls:'good',t:'Routing now assigns the source address/port — also after our hook. That’s why saddr/sport are reported as 0, and attribution keys on (daddr, dport).'}},
+  {m:'function<br>returns',                   entry:0, sockFilled:1, srcFilled:1,
+   v:{cls:'good',t:'Function returns. A kretprobe could read the now-complete socket — a different trade-off NetWatch could revisit for Phase 2.'}}
+];
+var elTlRange=document.getElementById('tlRange'), elTlMarks=document.getElementById('tlMarks'),
+    elTlUaddr=document.getElementById('tlUaddr'), elTlSock=document.getElementById('tlSock'),
+    elTlVerdict=document.getElementById('tlVerdict');
+function tlRender(){
+  var p=+elTlRange.value, s=TL[p];
+  var mk='';TL.forEach(function(d,k){mk+='<div class="tm'+(k===p?' on':'')+(d.entry?' entry':'')+'">'+d.m+'</div>';});
+  elTlMarks.innerHTML=mk;
+  // uaddr panel — valid at every position (copied in before entry). This is what NetWatch reads.
+  elTlUaddr.className='tlpanel read';
+  elTlUaddr.innerHTML='<h5>uaddr — struct sockaddr_in <span style="color:var(--green)">(what we read)</span></h5>'+
+    '<div class="row"><span>sin_port @0x02</span><span class="v ok">0x01BB → 443</span></div>'+
+    '<div class="row"><span>sin_addr @0x04</span><span class="v ok">142.250.72.4</span></div>';
+  // sock panel — zeros until filled
+  var dOk=s.sockFilled, sOk=s.srcFilled;
+  elTlSock.className='tlpanel';
+  elTlSock.innerHTML='<h5>sk — struct sock_common <span style="color:var(--overlay)">(what the old code read)</span></h5>'+
+    '<div class="row"><span>skc_daddr @0x00</span><span class="v '+(dOk?'ok':'zero')+'">'+(dOk?'142.250.72.4':'0x00000000')+'</span></div>'+
+    '<div class="row"><span>skc_dport @0x0C</span><span class="v '+(dOk?'ok':'zero')+'">'+(dOk?'443':'0x0000')+'</span></div>'+
+    '<div class="row"><span>skc_rcv_saddr @0x04</span><span class="v '+(sOk?'ok':'zero')+'">'+(sOk?'10.0.0.7':'0x00000000')+'</span></div>';
+  elTlVerdict.className='tlverdict '+s.v.cls;
+  elTlVerdict.innerHTML=s.v.t;
+}
+elTlRange.oninput=tlRender;
+function tlReset(){ elTlRange.value=1; tlRender(); }
+tlRender();
+
+/* ── ring buffer (slide 17) ──────────────────────────────────────────────── */
+var RING_CAP=16, rCount=0, rProd=0, rCons=0, rDrop=0, rTimer=null;
+var elRingRow=document.getElementById('ringRow'), elRingStat=document.getElementById('ringStat');
+function ringRender(msg){
+  var html='';
+  for(var i=0;i<RING_CAP;i++){
+    var full=i<rCount;
+    var head=(i===rCount-1), tail=(i===rCount && rCount<RING_CAP);
+    html+='<div class="slot'+(full?' full':'')+(head?' head':'')+(tail?' tail':'')+'"></div>';
+  }
+  elRingRow.innerHTML=html;
+  elRingStat.innerHTML='filled <b>'+rCount+'</b>/'+RING_CAP+' · produced '+rProd+' · consumed '+rCons+
+    ' · dropped <span class="drop">'+rDrop+'</span>'+(msg?'  —  '+msg:'');
+}
+function ringProduce(){ rProd++; if(rCount<RING_CAP){ rCount++; ringRender('<span class="wake">reserve()→slot · submit(0) wakes consumer</span>'); }
+  else { rDrop++; ringRender('<span class="drop">reserve() → None — buffer full, event DROPPED</span>'); } }
+function ringConsume(){ if(rCount>0){ rCount--; rCons++; ringRender('ring.next() → decode → channel'); } else ringRender('nothing to consume'); }
+function ringReset(){ if(rTimer){clearInterval(rTimer);rTimer=null;document.getElementById('ringAuto').textContent='▶ Auto';} rCount=rProd=rCons=rDrop=0; ringRender(''); }
+document.getElementById('ringProd').onclick=ringProduce;
+document.getElementById('ringCons').onclick=ringConsume;
+document.getElementById('ringBurst').onclick=function(){ for(var i=0;i<8;i++)ringProduce(); };
+document.getElementById('ringReset').onclick=ringReset;
+document.getElementById('ringAuto').onclick=function(){
+  var b=document.getElementById('ringAuto');
+  if(rTimer){clearInterval(rTimer);rTimer=null;b.textContent='▶ Auto';return;}
+  b.textContent='❚❚ Stop';
+  // producer outpaces consumer → fills, then drops (backpressure demo), then occasional drain
+  rTimer=setInterval(function(){ ringProduce(); if(rCount>0 && Math.floor(rProd+rCons)%3===0) ringConsume(); },420);
+};
+ringRender('');
+
+/* ── end-to-end player (slide 19) ────────────────────────────────────────── */
+var E2E=[
+  {z:'event',     t:'connect() in chrome',     p:'<span class="bl">chrome</span> (pid <b>4242</b>) → <span class="g">142.250.72.4</span>:<span class="k">443</span>',
+     n:'A browser opens a TCP connection — the kernel is about to run tcp_v4_connect.'},
+  {z:'kprobe',    t:'tcp_v4_connect entry',     p:'ctx.arg(1)=uaddr · <span class="g">daddr</span>,<span class="k">dport</span> from uaddr · comm=<b>chrome</b> pid=<b>4242</b> via helpers',
+     n:'The kprobe fires at entry; the program reads the destination from uaddr and the task from helpers.'},
+  {z:'event',     t:'build ConnectV4Event',     p:'<b>ConnectV4Event</b> { pid:4242, comm:"chrome", daddr:net, dport:net, <span style="color:var(--overlay)">saddr:0, sport:0</span> }',
+     n:'A #[repr(C)] event — note saddr/sport are 0; the source isn’t assigned yet (#38).'},
+  {z:'ring buffer',t:'reserve → write → submit',p:'EVENTS.reserve::&lt;ConnectV4Event&gt;() → slot · write(event) · <span class="g">submit(0)</span> ✓ wake',
+     n:'The event crosses the kernel boundary through the 256 KiB ring buffer.'},
+  {z:'reader',    t:'ring.next() + decode',     p:'decode: ntohl/ntohs → daddr=<span class="g">142.250.72.4</span> dport=<span class="k">443</span> → EbpfEvent',
+     n:'The userspace reader thread drains the buffer and flips network byte order.'},
+  {z:'cache',     t:'attribution cache',        p:'cache[(<span class="g">142.250.72.4</span>, <span class="k">443</span>)] = (<b>4242</b>, <b>chrome</b>)',
+     n:'Keyed on (daddr, dport) — the only stable identity available at kprobe entry.'},
+  {z:'UI',        t:'Connections tab',          p:'▸ <span class="g">142.250.72.4</span>:<span class="k">443</span>&nbsp;&nbsp;<b>chrome</b> (4242)&nbsp;✓',
+     n:'The connections collector overlays the cached owner — a process name packet capture alone never had.'}
+];
+var elE2e=document.getElementById('e2e'), elE2ePay=document.getElementById('e2ePay');
+var e2eIdx=-1, e2eTimer=null;
+function e2eBuild(){ var html='';
+  E2E.forEach(function(s,k){ html+='<div class="est" data-i="'+k+'"><div class="ez">'+s.z+'</div><div class="et">'+s.t+'</div></div>'+
+    (k<E2E.length-1?'<div class="econn">→</div>':''); });
+  elE2e.innerHTML=html; }
+function e2ePaint(){
+  [].forEach.call(elE2e.querySelectorAll('.est'),function(e,k){ e.classList.toggle('lit',k===e2eIdx); e.classList.toggle('done',k<e2eIdx); });
+  if(e2eIdx>=0){ var s=E2E[e2eIdx]; elE2ePay.innerHTML='<b>'+s.z+'</b> &nbsp; '+s.p+'<div style="color:var(--overlay);margin-top:7px;font-size:11.5px">'+s.n+'</div>'; }
+  else elE2ePay.innerHTML='<span style="color:var(--overlay)">Press play to trace one connection from kernel to UI.</span>';
+  document.getElementById('e2eNote').textContent = e2eIdx>=0 ? ((e2eIdx+1)+'/'+E2E.length) : '';
+}
+function e2eStep(){ if(e2eIdx<E2E.length-1){e2eIdx++;e2ePaint();} return e2eIdx<E2E.length-1; }
+function e2eReset(){ if(e2eTimer){clearInterval(e2eTimer);e2eTimer=null;} e2eIdx=-1; e2ePaint();
+  var b=document.getElementById('e2ePlay'); if(b)b.textContent='▶ Play'; }
+function e2ePlay(){ var b=document.getElementById('e2ePlay');
+  if(e2eTimer){clearInterval(e2eTimer);e2eTimer=null;b.textContent='▶ Play';return;}
+  if(e2eIdx>=E2E.length-1)e2eReset();
+  b.textContent='❚❚ Pause';
+  e2eTimer=setInterval(function(){ if(!e2eStep()){clearInterval(e2eTimer);e2eTimer=null;b.textContent='↻ Replay';} },950); }
+document.getElementById('e2ePlay').onclick=e2ePlay;
+document.getElementById('e2eStep').onclick=function(){ if(e2eTimer){clearInterval(e2eTimer);e2eTimer=null;document.getElementById('e2ePlay').textContent='▶ Play';} e2eStep(); };
+document.getElementById('e2eReset').onclick=e2eReset;
+e2eBuild(); e2ePaint();
+
+/* ───────────────────────── boot ────────────────────────────────────────── */
+(function(){
+  var h=parseInt((location.hash||'').replace('#',''),10);
+  go(isFinite(h)&&h>=1?h-1:0);
+})();
+</script>
+</body>
+</html>

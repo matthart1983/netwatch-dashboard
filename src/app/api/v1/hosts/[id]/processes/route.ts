@@ -12,6 +12,15 @@ interface AgentProcess {
   rx_rate: number
   tx_rate: number
   connection_count: number
+  // Process detail (agent v0.26+ / sdk 0.3 wire fields); absent from older agents.
+  ppid?: number | null
+  user?: string | null
+  cpu_pct?: number | null
+  mem_rss_bytes?: number | null
+  mem_virt_bytes?: number | null
+  state?: string | null
+  started_at?: string | null
+  cmd?: string | null
 }
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -31,6 +40,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     rx_rate_bps: p.rx_rate,
     tx_rate_bps: p.tx_rate,
     connection_count: p.connection_count,
+    ppid: p.ppid ?? null,
+    user: p.user ?? null,
+    cpu_pct: p.cpu_pct ?? null,
+    mem_rss_bytes: p.mem_rss_bytes ?? null,
+    mem_virt_bytes: p.mem_virt_bytes ?? null,
+    state: p.state ?? null,
+    started_at: p.started_at ?? null,
+    cmd: p.cmd ?? null,
   }))
 
   return NextResponse.json({ time: latest.time, processes })

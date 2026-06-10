@@ -5,8 +5,10 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import {
   getAlertRules, createAlertRule, updateAlertRule, deleteAlertRule,
-  getAlertHistory, AlertRule, AlertEvent
+  getAlertHistory, ackAlertEvent, AlertRule, AlertEvent
 } from '@/lib/api'
+import { TermStat } from '../_components/terminal'
+import { DashboardChrome, TopBar } from '../_components/DashboardChrome'
 
 const METRICS = [
   { value: 'host_status', label: 'Host Status', type: 'status' },
@@ -92,37 +94,23 @@ export default function AlertsPage() {
     loadData()
   }
 
-  if (authLoading || loading) return <div className="mt-10 nw-muted">Loading alerts...</div>
+  if (authLoading || loading) return <div className="mt-10 font-mono text-[13px]" style={{ color: 'var(--nw-text-soft)' }}>loading alerts…</div>
 
   return (
-    <div className="space-y-8">
-      <section className="nw-card rounded-[1.75rem] p-6 sm:p-8">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="space-y-3">
-            <span className="nw-kicker">Alerting control plane</span>
-            <div>
-              <h1 className="nw-section-title">Alert rules that stay sharp under pressure.</h1>
-              <p className="mt-3 max-w-2xl text-base leading-7 nw-muted">
-                Manage the signals that matter, tighten response noise, and keep the incident trail readable for the whole team.
-              </p>
-            </div>
+    <DashboardChrome>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <TopBar crumbs={[{ label: 'Alerts' }]} />
+        <div className="flex-1 overflow-auto space-y-7" style={{ padding: '20px 22px' }}>
+          <div>
+            <div className="font-mono uppercase mb-1.5" style={{ fontSize: 11, color: 'var(--nw-text-soft)', letterSpacing: '0.08em' }}>ALERTING · CONTROL PLANE</div>
+            <h1 className="m-0 font-mono font-medium" style={{ fontSize: 30, letterSpacing: '-0.02em', color: 'var(--nw-text)' }}>Alerts</h1>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[420px]">
-            <div className="nw-stat-card">
-              <div className="text-xs uppercase tracking-[0.18em] nw-subtle">Rules</div>
-              <div className="mt-2 text-2xl font-semibold">{rules.length}</div>
-            </div>
-            <div className="nw-stat-card">
-              <div className="text-xs uppercase tracking-[0.18em] nw-subtle">Events</div>
-              <div className="mt-2 text-2xl font-semibold">{events.length}</div>
-            </div>
-            <div className="nw-stat-card">
-              <div className="text-xs uppercase tracking-[0.18em] nw-subtle">Enabled</div>
-              <div className="mt-2 text-2xl font-semibold">{rules.filter(rule => rule.enabled).length}</div>
-            </div>
+
+          <div className="grid gap-2.5 sm:grid-cols-3">
+            <TermStat label="rules" value={rules.length} />
+            <TermStat label="events" value={events.length} />
+            <TermStat label="enabled" value={rules.filter(rule => rule.enabled).length} accent />
           </div>
-        </div>
-      </section>
 
       <div className="flex flex-wrap gap-3">
         <button onClick={() => setTab('rules')} className="nw-tab" data-active={tab === 'rules'}>
@@ -145,7 +133,7 @@ export default function AlertsPage() {
               </div>
             )}
             {rules.map(rule => (
-              <div key={rule.id} className="nw-card-hover rounded-[1.25rem] p-4 sm:p-5">
+              <div key={rule.id} className="nw-panel p-4 sm:p-5">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
@@ -169,7 +157,7 @@ export default function AlertsPage() {
                       onClick={() => handleToggle(rule)}
                       className={`rounded-full px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] ${
                         rule.enabled
-                          ? 'bg-[rgba(61,214,198,0.14)] text-[#bffff8]'
+                          ? 'bg-[rgba(159,232,180,0.14)] text-[#cdf0d7]'
                           : 'bg-white/6 text-[var(--nw-text-muted)]'
                       }`}
                     >
@@ -185,7 +173,7 @@ export default function AlertsPage() {
           </div>
 
           {showForm ? (
-            <form onSubmit={handleCreate} className="nw-card rounded-[1.5rem] p-5 sm:p-6 space-y-4">
+            <form onSubmit={handleCreate} className="nw-panel p-5 sm:p-6 space-y-4">
               <div className="space-y-2">
                 <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--nw-text-soft)]">New rule</p>
                 <h2 className="text-xl font-semibold">Define alert conditions</h2>
@@ -249,6 +237,19 @@ export default function AlertsPage() {
           return true
         })
         const firingCount = events.filter(e => e.state === 'firing').length
+        const dismiss = async (id: number) => {
+          try {
+            await ackAlertEvent(id)
+            setEvents(prev => prev.filter(e => e.id !== id))  // dismissed → gone
+          } catch { /* ignore — row stays as-is */ }
+        }
+        const clearShown = async () => {
+          const ids = filteredEvents.map(e => e.id)
+          if (ids.length === 0) return
+          if (!window.confirm(`Dismiss ${ids.length} shown alert${ids.length === 1 ? '' : 's'}? This cannot be undone.`)) return
+          await Promise.all(ids.map(id => ackAlertEvent(id).catch(() => {})))
+          setEvents(prev => prev.filter(e => !ids.includes(e.id)))
+        }
         return (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -260,13 +261,18 @@ export default function AlertsPage() {
               className="flex-1 min-w-[200px] max-w-md bg-white/4 border border-white/10 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder:nw-subtle focus:outline-none focus:border-[var(--nw-accent)]"
             />
             <div className="flex items-center gap-1.5">
-              <button onClick={() => setStateFilter('all')} className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${stateFilter === 'all' ? 'bg-[rgba(61,214,198,0.15)] border-[rgba(61,214,198,0.35)] text-[var(--nw-text)]' : 'bg-white/4 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'}`}>All ({events.length})</button>
+              <button onClick={() => setStateFilter('all')} className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${stateFilter === 'all' ? 'bg-[rgba(159,232,180,0.15)] border-[rgba(159,232,180,0.35)] text-[var(--nw-text)]' : 'bg-white/4 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'}`}>All ({events.length})</button>
               <button onClick={() => setStateFilter('firing')} className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${stateFilter === 'firing' ? 'bg-red-500/20 border-red-500/30 text-red-200' : 'bg-white/4 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'}`}>Firing ({firingCount})</button>
-              <button onClick={() => setStateFilter('resolved')} className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${stateFilter === 'resolved' ? 'bg-[rgba(61,214,198,0.15)] border-[rgba(61,214,198,0.35)] text-[var(--nw-text)]' : 'bg-white/4 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'}`}>Resolved ({events.length - firingCount})</button>
+              <button onClick={() => setStateFilter('resolved')} className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${stateFilter === 'resolved' ? 'bg-[rgba(159,232,180,0.15)] border-[rgba(159,232,180,0.35)] text-[var(--nw-text)]' : 'bg-white/4 border-white/10 text-[var(--nw-text-muted)] hover:text-[var(--nw-text)]'}`}>Resolved ({events.length - firingCount})</button>
             </div>
             <span className="text-xs nw-subtle tabular-nums">
               {filteredEvents.length === events.length ? `${events.length} events` : `${filteredEvents.length} of ${events.length}`}
             </span>
+            {filteredEvents.length > 0 && (
+              <button onClick={clearShown} className="rounded-full border border-white/10 bg-white/4 px-2.5 py-1 text-xs text-[var(--nw-text-muted)] transition-colors hover:!text-[var(--nw-text)] hover:border-white/20">
+                Clear {stateFilter === 'all' ? 'all' : stateFilter} ({filteredEvents.length})
+              </button>
+            )}
           </div>
           <div className="grid gap-3">
           {filteredEvents.length === 0 ? (
@@ -280,16 +286,24 @@ export default function AlertsPage() {
             </div>
           ) : (
             filteredEvents.map(event => (
-              <div key={event.id} className="nw-card rounded-[1.25rem] p-4 sm:p-5">
+              <div key={event.id} className="nw-panel p-4 sm:p-5">
                 <div className="flex items-start gap-4">
                   <span className={`mt-1 h-2.5 w-2.5 rounded-full ${event.state === 'firing' ? 'bg-red-400' : 'bg-[var(--nw-accent)]'}`} />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium text-[var(--nw-text)]">{event.message}</div>
                     <div className="mt-1 text-xs nw-subtle">{new Date(event.created_at).toLocaleString()}</div>
                   </div>
-                  <span className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${event.state === 'firing' ? 'bg-red-500/12 text-red-300' : 'bg-[rgba(61,214,198,0.14)] text-[#bffff8]'}`}>
-                    {event.state}
-                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => dismiss(event.id)}
+                      className="rounded-full border border-white/10 bg-white/4 px-3 py-1 text-[11px] font-medium text-[var(--nw-text-muted)] transition-colors hover:text-[var(--nw-text)] hover:border-white/20"
+                    >
+                      Dismiss
+                    </button>
+                    <span className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${event.state === 'firing' ? 'bg-red-500/12 text-red-300' : 'bg-[rgba(159,232,180,0.14)] text-[#cdf0d7]'}`}>
+                      {event.state}
+                    </span>
+                  </div>
                 </div>
               </div>
             ))
@@ -298,6 +312,8 @@ export default function AlertsPage() {
         </div>
         )
       })()}
-    </div>
+        </div>
+      </div>
+    </DashboardChrome>
   )
 }

@@ -1,0 +1,1039 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Learning Rust — the ownership model and beyond</title>
+<style>
+  :root{
+    --crust:#11111b; --mantle:#181825; --base:#1e1e2e;
+    --surface0:#313244; --surface1:#45475a; --surface2:#585b70;
+    --overlay:#6c7086; --subtext:#a6adc8; --text:#cdd6f4;
+    --mauve:#cba6f7; --blue:#89b4fa; --sapphire:#74c7ec; --sky:#89dceb;
+    --green:#a6e3a1; --yellow:#f9e2af; --peach:#fab387; --red:#f38ba8;
+    --pink:#f5c2e7; --teal:#94e2d5; --lavender:#b4befe;
+    --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:
+      radial-gradient(1200px 800px at 82% -12%, #2c2118 0%, transparent 60%),
+      radial-gradient(1000px 700px at -10% 110%, #2a1b1b 0%, transparent 55%),
+      var(--base);
+    color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden;}
+
+  #progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--peach),var(--red),var(--mauve));width:0;z-index:50;transition:width .25s ease}
+  #brand{position:fixed;top:14px;left:20px;z-index:40;font-family:var(--mono);font-size:13px;letter-spacing:.5px;color:var(--subtext)}
+  #brand b{color:var(--text)} #brand .dot{color:var(--peach)}
+  #act{position:fixed;top:14px;right:20px;z-index:40;font-family:var(--mono);font-size:12px;color:var(--overlay);letter-spacing:.12em;text-transform:uppercase}
+  #counter{position:fixed;bottom:14px;right:20px;z-index:40;font-family:var(--mono);font-size:13px;color:var(--overlay)} #counter b{color:var(--subtext)}
+  #hint{position:fixed;bottom:14px;left:20px;z-index:40;font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  kbd{font-family:var(--mono);background:var(--surface0);border:1px solid var(--surface1);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:.85em;color:var(--text)}
+
+  #deck{position:relative;height:100vh;width:100vw}
+  .slide{position:absolute;inset:0;display:none;overflow:hidden;opacity:0;transition:opacity .35s ease}
+  .slide.active{display:block;opacity:1}
+  .wrap{position:absolute;left:50%;top:50%;width:1140px;max-width:92vw;transform:translate(-50%,-50%);transform-origin:center center}
+
+  h1{font-size:clamp(34px,5.5vw,62px);line-height:1.04;margin:0 0 18px;letter-spacing:-.02em}
+  h1 .grad{background:linear-gradient(90deg,var(--peach),var(--red),var(--mauve));-webkit-background-clip:text;background-clip:text;color:transparent}
+  h2{font-size:clamp(23px,3.1vw,36px);margin:0 0 4px;letter-spacing:-.01em}
+  .kick{font-family:var(--mono);font-size:12.5px;text-transform:uppercase;letter-spacing:.22em;color:var(--peach);margin:0 0 9px}
+  .lede{font-size:clamp(16px,2vw,21px);color:var(--subtext);line-height:1.55;max-width:62ch}
+  p{line-height:1.6} .muted{color:var(--subtext)} .small{font-size:14px} b.hl{color:var(--text)}
+  ul.clean{list-style:none;padding:0;margin:14px 0 0}
+  ul.clean li{padding:7px 0 7px 26px;position:relative;color:var(--subtext);line-height:1.5}
+  ul.clean li::before{content:"▸";position:absolute;left:0;color:var(--peach)}
+  ul.clean li b{color:var(--text)}
+  code.inl{font-family:var(--mono);background:var(--surface0);border:1px solid var(--surface1);border-radius:6px;padding:1px 6px;font-size:.88em;color:var(--lavender)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--surface1);color:var(--subtext);margin:0 6px 6px 0;background:var(--mantle)}
+  .tag.k{color:var(--mauve);border-color:#3a2f50} .tag.g{color:var(--green);border-color:#2f4a36} .tag.b{color:var(--peach);border-color:#5c4327}
+  .cols{display:grid;grid-template-columns:1.05fr .95fr;gap:34px;align-items:start}
+  @media(max-width:880px){.cols{grid-template-columns:1fr;gap:20px}}
+
+  .code{position:relative;background:var(--crust);border:1px solid var(--surface0);border-radius:12px;overflow:hidden;box-shadow:0 18px 40px -24px #000}
+  .code .bar{display:flex;align-items:center;gap:7px;padding:9px 13px;background:var(--mantle);border-bottom:1px solid var(--surface0)}
+  .code .bar i{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .code .bar .r{background:#f38ba8}.code .bar .y{background:#f9e2af}.code .bar .g{background:#a6e3a1}
+  .code .bar span{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  pre{margin:0;padding:13px 16px;overflow:auto;font-family:var(--mono);font-size:clamp(11px,1.25vw,13.5px);line-height:1.55;tab-size:4}
+  pre code{white-space:pre}
+  .cap{font-family:var(--mono);font-size:11.5px;color:var(--overlay);margin:8px 2px 0}
+  .cmt{color:var(--overlay);font-style:italic} .str{color:var(--green)} .kw{color:var(--mauve)} .ty{color:var(--yellow)}
+  .num{color:var(--peach)} .lt{color:var(--pink)} .mac{color:var(--teal)} .attr{color:var(--peach)} .fnc{color:var(--blue)}
+
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:6px}
+  .card{background:var(--mantle);border:1px solid var(--surface0);border-radius:12px;padding:14px 16px}
+  .card h4{margin:0 0 6px;font-size:15px;color:var(--text)} .card h4 .loc{font-family:var(--mono);font-size:11px;color:var(--overlay);float:right;font-weight:400}
+  .card p{margin:0;font-size:13.5px;color:var(--subtext);line-height:1.5}
+  .flowv{display:flex;flex-direction:column;gap:0;align-items:center;font-family:var(--mono);margin-top:6px}
+  .flowv .node{min-width:min(560px,86vw);text-align:center;font-size:12.5px;background:var(--surface0);border:1px solid var(--surface1);border-radius:8px;padding:7px 10px;margin:6px 0;color:var(--text)}
+  .flowv .node.k{border-color:#3a2f50;color:var(--mauve)} .flowv .node.g{border-color:#2f4a36;color:var(--green)}
+  .flowv .node.b{border-color:#2b3d5c;color:var(--blue)} .flowv .node.p{border-color:#5c3a44;color:var(--pink)} .flowv .node.y{border-color:#5c512b;color:var(--yellow)}
+  .flowv .down{color:var(--overlay);font-size:20px;line-height:1}
+
+  .ix{background:var(--mantle);border:1px solid var(--surface0);border-radius:14px;padding:16px 18px;margin-top:10px}
+  .ix .ixhead{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+  .ix .ixhead .pill{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--peach);border:1px solid #5c4327;border-radius:999px;padding:2px 8px}
+  .ix .ixhead h4{margin:0;font-size:15px;color:var(--text);font-weight:600}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  .btn{font-family:var(--mono);font-size:12.5px;background:var(--surface0);color:var(--text);border:1px solid var(--surface1);border-bottom-width:2px;border-radius:8px;padding:6px 13px;cursor:pointer;transition:.12s;user-select:none}
+  .btn:hover{background:var(--surface1);border-color:var(--surface2)} .btn:active{transform:translateY(1px);border-bottom-width:1px}
+  .btn.primary{color:var(--peach);border-color:#5c4327;background:#2a2018} .btn.primary:hover{background:#332618}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .seg{display:flex;gap:6px;flex-wrap:wrap} .seg .btn.on{background:var(--peach);color:var(--crust);border-color:var(--peach)}
+
+  /* stepper (borrow checker) */
+  .vfsteps{font-family:var(--mono);font-size:12px;border:1px solid var(--surface0);border-radius:9px;overflow:hidden}
+  .vfsteps .ln{padding:6px 11px;border-bottom:1px solid var(--mantle);color:var(--overlay);display:flex;gap:9px;transition:.12s;align-items:baseline}
+  .vfsteps .ln:last-child{border-bottom:0}
+  .vfsteps .ln.done{color:var(--subtext)} .vfsteps .ln.done .lx{color:var(--green)}
+  .vfsteps .ln.cur{background:#1c2436;color:var(--text)} .vfsteps .ln.bad{background:#2a1820;color:var(--text)} .vfsteps .ln.bad .lx{color:var(--red)}
+  .vfsteps .ln .lx{flex:0 0 18px;color:var(--blue)}
+  .vfsteps .ln .ld{color:var(--overlay);font-size:11px;margin-left:auto;text-align:right;max-width:52%}
+  .vfstate{display:flex;align-items:center;gap:14px;margin-top:11px;font-family:var(--mono);font-size:12.5px;flex-wrap:wrap}
+  .vfstate .live{color:var(--subtext)} .vfstate .live b{color:var(--yellow)}
+  .vfstate .vd{padding:6px 12px;border-radius:8px;line-height:1.4}
+  .vfstate .vd.good{background:#16241a;border:1px solid #2f4a36;color:var(--green)}
+  .vfstate .vd.bad{background:#2a1820;border:1px solid #5c3a44;color:var(--red)}
+
+  /* scrubber (lifetimes) */
+  .tlmarks{display:flex;justify-content:space-between;margin-top:8px;font-family:var(--mono);font-size:10.5px}
+  .tlmarks .tm{flex:1 1 0;text-align:center;color:var(--overlay);line-height:1.3;padding:0 2px;transition:.15s} .tlmarks .tm.on{color:var(--peach)}
+  .tlpanel{background:var(--crust);border:1px solid var(--surface0);border-radius:10px;padding:12px 14px;font-family:var(--mono);font-size:12px}
+  .tlpanel h5{margin:0 0 9px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--subtext)}
+  .tlpanel .row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--mantle)}
+  .tlpanel .v.ok{color:var(--green)} .tlpanel .v.no{color:var(--red)} .tlpanel .v.na{color:var(--overlay)}
+  .tlverdict{margin-top:14px;font-family:var(--mono);font-size:13px;padding:10px 14px;border-radius:9px;line-height:1.5}
+  .tlverdict.good{background:#16241a;border:1px solid #2f4a36;color:var(--green)} .tlverdict.bad{background:#2a1820;border:1px solid #5c3a44;color:var(--red)}
+
+  /* move visualizer */
+  .mvdiag{font-family:var(--mono);font-size:12.5px;display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
+  .mvbox{border:1px solid var(--surface1);border-radius:8px;padding:8px 11px;background:var(--mantle);transition:.15s}
+  .mvbox.heap{border-color:#5c4327} .mvbox.dead{opacity:.5;border-color:#5c3a44;color:var(--overlay);text-decoration:line-through}
+  .mvbox b{color:var(--text)} .mvbox .own{color:var(--peach)} .mvbox .ref{color:var(--blue)}
+
+  /* pipeline (iterators, later) */
+  .pipe{display:flex;align-items:stretch;gap:0;margin-top:6px;flex-wrap:wrap}
+  .pstage{flex:1 1 0;min-width:112px;background:var(--mantle);border:1px solid var(--surface0);border-radius:12px;padding:12px;position:relative;transition:.25s;opacity:.5}
+  .pstage.lit{opacity:1;border-color:var(--peach);box-shadow:0 0 0 1px var(--peach),0 10px 30px -16px var(--peach)}
+  .pstage .pz{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--overlay)}
+  .pstage .pt{font-size:13.5px;color:var(--text);margin:5px 0 3px;font-weight:600} .pstage .pd{font-size:11.5px;color:var(--subtext);line-height:1.4}
+  .pconn{align-self:center;color:var(--overlay);font-size:18px;padding:0 4px}
+
+  #overview{position:fixed;inset:0;z-index:60;background:rgba(17,17,27,.94);backdrop-filter:blur(6px);display:none;padding:54px clamp(20px,5vw,80px);overflow:auto}
+  #overview.open{display:block}
+  #overview h3{font-family:var(--mono);color:var(--subtext);font-weight:500;letter-spacing:.1em;text-transform:uppercase;font-size:13px;margin:0 0 18px}
+  .ovgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:11px}
+  .ov{background:var(--mantle);border:1px solid var(--surface0);border-radius:10px;padding:11px 13px;cursor:pointer;transition:.15s;display:flex;gap:10px;align-items:baseline}
+  .ov:hover{border-color:var(--peach);transform:translateY(-2px);background:var(--base)}
+  .ov .num{font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  .ov .t{font-size:13.5px;color:var(--text);line-height:1.3}
+  .ov .az{font-family:var(--mono);font-size:9px;color:var(--peach);letter-spacing:.1em;text-transform:uppercase;display:block;margin-top:3px}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div id="brand"><b>Rust</b> <span class="muted">the ownership model &amp; beyond</span> <span class="dot">●</span></div>
+<div id="act"></div>
+<div id="hint"><kbd>←</kbd> <kbd>→</kbd> move · <kbd>O</kbd> overview · <kbd>F</kbd> fit</div>
+<div id="counter"><b id="cnum">01</b> / <span id="ctot">00</span></div>
+
+<main id="deck">
+
+  <!-- 1 ─ Title -->
+  <section class="slide" data-title="Title" data-act="Intro">
+    <div class="wrap">
+      <p class="kick">A mental model, not a syntax tour</p>
+      <h1>Learning <span class="grad">Rust</span>.<br>Ownership is the whole idea.</h1>
+      <p class="lede">Rust gives you C-level control <b class="hl">and</b> memory safety, with no garbage collector — by
+        making the compiler prove your program is safe before it runs. The price is one big idea you have to
+        internalize: <b class="hl">ownership</b>. Get that, and the borrow checker stops fighting you and starts
+        catching your bugs. We build it from first principles, then climb to traits, errors, and fearless concurrency.</p>
+      <div style="margin-top:16px">
+        <span class="tag b">ownership &amp; moves</span><span class="tag b">borrowing</span><span class="tag k">the borrow checker</span>
+        <span class="tag k">lifetimes</span><span class="tag g">traits</span><span class="tag g">Result / ?</span><span class="tag">fearless concurrency</span>
+      </div>
+      <p class="small muted" style="margin-top:18px">Five acts · ~21 stops · drive the borrow checker, scrub a lifetime,
+        watch a move invalidate a value. Real examples cameo from a production Rust codebase (NetWatch).</p>
+    </div>
+  </section>
+
+  <!-- 2 ─ The bargain -->
+  <section class="slide" data-title="The bargain" data-act="I · The bargain">
+    <div class="wrap">
+      <p class="kick">What you get, and what it costs</p>
+      <h2>Memory safety without a garbage collector</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Most languages pick one: <b class="hl">manual memory</b> (C/C++ — fast, footguns) or a
+            <b class="hl">garbage collector</b> (Go/Java — safe, runtime cost). Rust refuses the trade by moving the
+            bookkeeping to <b class="hl">compile time</b>.</p>
+          <ul class="clean">
+            <li><b>No GC, no pauses.</b> Memory is freed at a deterministic, known point — when its owner goes out of
+              scope.</li>
+            <li><b>No use-after-free, no data races.</b> The compiler rejects them — they're not runtime bugs you hunt,
+              they're <i>build errors</i>.</li>
+            <li><b>"Fearless" is literal.</b> The confidence comes from the compiler, not from your discipline or your
+              test coverage.</li>
+          </ul>
+          <p class="small muted">The cost is real: you learn to think in ownership, and the compiler says "no" a lot at
+            first. This deck is about making those "no"s legible.</p>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node p">C/C++ — control, but UAF &amp; races at runtime</div>
+            <div class="down">vs</div>
+            <div class="node y">Go/Java — safe, but a GC at runtime</div>
+            <div class="down">Rust:</div>
+            <div class="node g">control + safety, proven at COMPILE time</div>
+          </div>
+          <p class="cap">The borrow checker is a theorem prover for "no aliasing bug." Pass it, and a whole class of
+            CVEs is simply impossible in safe Rust.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 ─ Ownership in one picture -->
+  <section class="slide" data-title="Ownership in one picture" data-act="I · The bargain">
+    <div class="wrap">
+      <p class="kick">Three rules, and everything follows</p>
+      <h2>Every value has exactly one owner</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">The entire system rests on three rules the compiler enforces. Memorize these; the rest of Rust
+            is consequences of them.</p>
+          <ul class="clean">
+            <li><b>1. Each value has one owner</b> — a single variable binding responsible for it.</li>
+            <li><b>2. One owner at a time</b> — assign or pass it, and ownership <i>moves</i>; the old binding is no
+              longer valid.</li>
+            <li><b>3. Owner drops → value freed</b> — when the owner leaves scope, the value's
+              <code class="inl">Drop</code> runs and its memory is released. Deterministically.</li>
+          </ul>
+          <p class="small muted">"Borrowing" (next act) is how you let other code <i>use</i> a value without taking
+            ownership — the escape valve that makes rule 2 livable.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>ownership &amp; scope</span></div><div data-rust><script type="text/plain">fn main() {
+    let s = String::from("netwatch"); // s owns the heap data
+    take(s);                          // ownership MOVES into take()
+    // s is no longer valid here — using it won't compile
+
+    let n = 5;        // i32 is Copy: cheap, lives on the stack
+    take_copy(n);     // n is COPIED, not moved
+    println!("{n}");  // ...so n is still fine
+}                     // anything still owned here is dropped now
+
+fn take(s: String) { /* ... */ }      // s dropped at end of fn
+fn take_copy(n: i32) { /* ... */ }</script></div></div>
+      </div>
+      <p class="cap">Stack values that are cheap to duplicate (<code class="inl">i32</code>, <code class="inl">bool</code>,
+        <code class="inl">char</code>…) are <code class="inl">Copy</code>: assigning them copies. Everything heap-backed
+        (<code class="inl">String</code>, <code class="inl">Vec</code>…) <i>moves</i>.</p>
+    </div>
+  </section>
+
+  <!-- 4 ─ Move vs Copy vs Clone -->
+  <section class="slide" data-title="Move · Copy · Clone" data-act="I · The bargain">
+    <div class="wrap">
+      <p class="kick">Three ways a value travels</p>
+      <h2>The difference between move, copy, and clone is the difference between fast and safe</h2>
+      <div class="grid2">
+        <div class="card"><h4>Move <span class="loc">default for owned</span></h4><p>Assigning or passing a heap value
+          <i>transfers</i> ownership — no data is copied, just the pointer. Cheap (a few bytes), but the source binding
+          is invalidated so two owners can never free the same memory.</p></div>
+        <div class="card"><h4>Copy <span class="loc">cheap stack types</span></h4><p>Types that are trivially
+          duplicable (<code class="inl">i32</code>, <code class="inl">bool</code>, small <code class="inl">Copy</code>
+          structs) are <i>copied</i> on assignment. Both bindings stay valid because each has its own independent value.</p></div>
+        <div class="card"><h4>Clone <span class="loc">explicit deep copy</span></h4><p><code class="inl">.clone()</code>
+          makes an independent deep copy on purpose — you opt into the cost. The source stays valid because you now have
+          two separate owners of two separate allocations.</p></div>
+        <div class="card"><h4>Borrow <span class="loc">use without owning</span></h4><p>Often you don't need to move
+          <i>or</i> copy — you just want to <i>read</i> or <i>mutate</i> in place. That's a reference
+          (<code class="inl">&amp;</code> / <code class="inl">&amp;mut</code>) — the whole of Act II.</p></div>
+      </div>
+      <p class="cap">The art of idiomatic Rust is largely "borrow by default, move when you must, clone when you mean
+        it." Reflexive cloning to dodge the borrow checker is the classic beginner smell.</p>
+    </div>
+  </section>
+
+  <!-- 5 ─ Move visualizer (INTERACTIVE) -->
+  <section class="slide" data-title="Ownership &amp; moves" data-act="II · Ownership">
+    <div class="wrap">
+      <p class="kick">Watch what happens to the source binding</p>
+      <h2>After a move, the original is gone — and the compiler knows</h2>
+      <p class="lede" style="max-width:82ch">The single most common first-week error is <code class="inl">use of moved
+        value</code>. Pick what <code class="inl">t</code> does to <code class="inl">s</code> and see whether the final
+        <code class="inl">println!</code> compiles.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">explore</span><h4>let s = String::from("netwatch");</h4></div>
+        <div class="seg" id="mvMode">
+          <button class="btn on" data-m="move">let t = s;</button>
+          <button class="btn" data-m="clone">let t = s.clone();</button>
+          <button class="btn" data-m="borrow">let t = &amp;s;</button>
+        </div>
+        <div class="cols" style="margin-top:13px;gap:20px">
+          <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>does it compile?</span></div><pre><code id="mvCode"></code></pre></div>
+          <div><div class="mvdiag" id="mvDiag"></div><div class="tlverdict" id="mvVerdict"></div></div>
+        </div>
+      </div>
+      <p class="cap">A move is just a pointer handoff plus a compile-time note that the source is dead. No runtime cost,
+        no runtime check — the safety is entirely in the type system.</p>
+    </div>
+  </section>
+
+  <!-- 6 ─ Borrowing -->
+  <section class="slide" data-title="Borrowing" data-act="II · Ownership">
+    <div class="wrap">
+      <p class="kick">Use a value without taking it</p>
+      <h2>Shared <code class="inl">&amp;</code> XOR exclusive <code class="inl">&amp;mut</code></h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Moving everything everywhere would be miserable. <b class="hl">References</b> let you lend
+            access. The one rule that makes them safe — and that the borrow checker enforces:</p>
+          <ul class="clean">
+            <li><b>Any number of shared <code class="inl">&amp;</code> references</b> (read-only), <b>OR</b></li>
+            <li><b>exactly one exclusive <code class="inl">&amp;mut</code> reference</b> (read-write) —</li>
+            <li><b>never both at once.</b> Aliasing XOR mutation. That single invariant is what prevents data races and
+              iterator invalidation.</li>
+          </ul>
+          <p class="small muted">A reference borrows; it never owns. The borrow must end before the owner is moved or
+            dropped — which is what lifetimes (slide 8) track.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>shared vs exclusive</span></div><div data-rust><script type="text/plain">let mut log = String::from("conn");
+
+// many shared readers — fine
+let a = &log;
+let b = &log;
+println!("{a} {b}");      // ok
+
+// one exclusive writer — fine, but ONLY one,
+// and not while a shared borrow is alive
+let w = &mut log;
+w.push_str(" open");      // mutate in place
+println!("{w}");
+
+// &log here WHILE w is alive would not compile:
+//   cannot borrow `log` as immutable because it is
+//   also borrowed as mutable  (E0502)</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 ─ The borrow checker (MARQUEE STEPPER) -->
+  <section class="slide" data-title="The borrow checker" data-act="II · Ownership">
+    <div class="wrap">
+      <p class="kick">The compiler, simulating your references</p>
+      <h2>Step the checker — then break the rule on purpose</h2>
+      <p class="lede" style="max-width:82ch">The borrow checker walks your code tracking which references are
+        <b class="hl">live</b> at each point. Pick a scenario and step it: watch the live borrows, and watch a real
+        error fire the moment aliasing meets mutation.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4>borrow check: <code style="color:var(--peach)">let mut v = vec![1, 2, 3];</code></h4></div>
+        <div class="seg" id="bcMode" style="margin-bottom:9px">
+          <button class="btn on" data-m="shared">two shared &amp;</button>
+          <button class="btn" data-m="twomut">two &amp;mut</button>
+          <button class="btn" data-m="mixed">&amp;mut while &amp;</button>
+        </div>
+        <div class="vfsteps" id="bcSteps"></div>
+        <div class="vfstate" id="bcState"></div>
+        <div class="controls">
+          <button class="btn primary" id="bcStep">Step ▸</button>
+          <button class="btn" id="bcRun">Run ▶</button>
+          <button class="btn" id="bcReset">Reset</button>
+        </div>
+      </div>
+      <p class="cap">These errors feel like obstacles for a week, then become a sixth sense. The checker is catching the
+        exact bugs that are heisenbugs in C — aliased mutation — at compile time.</p>
+    </div>
+  </section>
+
+  <!-- 8 ─ Lifetimes (INTERACTIVE SCRUBBER) -->
+  <section class="slide" data-title="Lifetimes" data-act="II · Ownership">
+    <div class="wrap">
+      <p class="kick">A reference may not outlive what it points to</p>
+      <h2>Lifetimes are the spans the checker compares</h2>
+      <p class="lede" style="max-width:84ch">A <b class="hl">lifetime</b> is just the region of code where a reference
+        is valid. The rule is simple: a borrow must not outlive its owner. Scrub the timeline — in the dangling case,
+        watch the owner drop while the reference is still around.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4>does the borrow outlive the owner?</h4></div>
+        <div class="seg" id="ltMode" style="margin-bottom:10px">
+          <button class="btn on" data-m="ok">valid borrow</button>
+          <button class="btn" data-m="dangle">dangling (won't compile)</button>
+        </div>
+        <input type="range" id="ltRange" min="0" max="3" value="0" step="1" style="width:100%;accent-color:var(--peach)">
+        <div class="tlmarks" id="ltMarks"></div>
+        <div class="cols" style="margin-top:14px;gap:20px">
+          <div class="tlpanel" id="ltOwner"></div>
+          <div class="tlpanel" id="ltBorrow"></div>
+        </div>
+        <div class="tlverdict" id="ltVerdict"></div>
+      </div>
+      <p class="cap">Most lifetimes are <i>elided</i> — the compiler infers them. You only write <code class="inl">'a</code>
+        annotations when a function returns a reference and the compiler can't tell which input it borrows from.</p>
+    </div>
+  </section>
+
+  <!-- 9 ─ Slices / no dangling -->
+  <section class="slide" data-title="Slices, safely" data-act="II · Ownership">
+    <div class="wrap">
+      <p class="kick">A borrowed view into someone else's buffer</p>
+      <h2>Slices are references — so dangling is impossible</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A slice (<code class="inl">&amp;[T]</code>, <code class="inl">&amp;str</code>) is a borrowed
+            <i>window</i> — a pointer and a length — into a <code class="inl">Vec</code> or <code class="inl">String</code>
+            it doesn't own. The borrow checker ties the window's lifetime to the buffer's.</p>
+          <ul class="clean">
+            <li>Hold a slice into a <code class="inl">Vec</code>, and you <b>cannot</b> mutate that
+              <code class="inl">Vec</code> (e.g. <code class="inl">push</code>, which might reallocate) while the slice
+              lives.</li>
+            <li>That's the same aliasing-XOR-mutation rule preventing the classic C bug: a pointer left dangling by a
+              <code class="inl">realloc</code>.</li>
+          </ul>
+          <p class="small muted">The bug doesn't need a sanitizer to find at runtime — it doesn't compile.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>the iterator-invalidation bug, prevented</span></div><div data-rust><script type="text/plain">let mut bytes = vec![10u8, 20, 30];
+
+let first_two = &bytes[0..2];   // a borrowed slice
+
+bytes.push(40);                 // ✗ would reallocate,
+                                //   dangling the slice
+println!("{first_two:?}");      // ...so this line keeps
+                                //   first_two alive → E0502
+
+// fix: finish using the slice BEFORE mutating,
+// or clone what you need out of it first.</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10 ─ Enums & match -->
+  <section class="slide" data-title="Enums &amp; matching" data-act="III · Types that work for you">
+    <div class="wrap">
+      <p class="kick">Make illegal states unrepresentable</p>
+      <h2>Enums carry data; <code class="inl">match</code> must handle every case</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Rust enums are <b class="hl">sum types</b>: each variant can hold its own data. Combined with
+            exhaustive <code class="inl">match</code>, you encode "exactly one of these, with its payload" — and the
+            compiler won't let you forget a case.</p>
+          <ul class="clean">
+            <li>A variant can be empty, or carry a tuple/struct of data — model the real shape of your domain.</li>
+            <li><code class="inl">match</code> is <b>exhaustive</b>: miss a variant and it's a compile error, not a bug
+              that ships.</li>
+            <li>Matching <b>binds</b> the payload, so you handle the data and the case together.</li>
+          </ul>
+          <p class="small muted">This is how <code class="inl">Option</code> and <code class="inl">Result</code> are
+            built — they're just enums in the standard library.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>netwatch — src/ebpf/mod.rs</span></div><div data-rust><script type="text/plain">// each variant can carry different data
+pub enum EbpfStatus {
+    Active,                  // no payload
+    Unavailable(String),     // carries a reason
+    NotCompiled,
+}
+
+fn describe(s: &EbpfStatus) -> String {
+    match s {                       // exhaustive
+        EbpfStatus::Active         => "running".into(),
+        EbpfStatus::Unavailable(r) => format!("off: {r}"),
+        EbpfStatus::NotCompiled    => "no ebpf feature".into(),
+    }   // miss a variant → the code won't compile
+}</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11 ─ Error handling -->
+  <section class="slide" data-title="Errors are values" data-act="III · Types that work for you">
+    <div class="wrap">
+      <p class="kick">No exceptions — failure is in the type</p>
+      <h2><code class="inl">Result&lt;T, E&gt;</code> and the <code class="inl">?</code> operator</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">There are no exceptions to forget to catch. A function that can fail says so in its
+            <b class="hl">return type</b>: <code class="inl">Result&lt;T, E&gt;</code> — either <code class="inl">Ok(value)</code>
+            or <code class="inl">Err(why)</code>.</p>
+          <ul class="clean">
+            <li>The signature is honest: you can't ignore a possible failure, because you have to unwrap the
+              <code class="inl">Result</code> to get the value.</li>
+            <li><code class="inl">?</code> is the ergonomic glue: "if this is <code class="inl">Err</code>, return it from
+              the whole function; otherwise give me the <code class="inl">Ok</code> value."</li>
+            <li>Errors propagate up the call stack as <i>values</i>, explicitly — no invisible control flow.</li>
+          </ul>
+          <p class="small muted"><code class="inl">panic!</code> exists for truly unrecoverable bugs — but recoverable
+            failure is always a <code class="inl">Result</code>.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>netwatch — the kprobe, simplified</span></div><div data-rust><script type="text/plain">fn try_tcp_v4_connect(ctx: ProbeContext)
+    -> Result<(), i64>
+{
+    // `?`: if arg(1) is None, ok_or makes it Err and
+    // `?` returns that Err from the whole function.
+    let uaddr = ctx.arg(1).ok_or(1i64)?;
+
+    let daddr = read_u32(uaddr, 0x04)?;  // propagate
+    EVENTS.reserve()?.submit(daddr);     // ...up the stack
+
+    Ok(())   // success is also just a value
+}</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 12 ─ Traits -->
+  <section class="slide" data-title="Traits" data-act="III · Types that work for you">
+    <div class="wrap">
+      <p class="kick">Shared behavior, without inheritance</p>
+      <h2>Traits define what a type can <i>do</i></h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A <b class="hl">trait</b> is a set of methods a type can implement — Rust's answer to
+            interfaces and the basis of generics. NetWatch's DPI layer is one trait, implemented 15 times.</p>
+          <ul class="clean">
+            <li><b>Define once, implement per type.</b> Each protocol classifier <code class="inl">impl</code>s the same
+              <code class="inl">Classifier</code> trait.</li>
+            <li><b>Static dispatch</b> (<code class="inl">&lt;C: Classifier&gt;</code>) — the compiler generates a
+              specialized copy per type. Zero runtime cost.</li>
+            <li><b>Dynamic dispatch</b> (<code class="inl">&amp;dyn Classifier</code>) — one vtable, chosen at runtime.
+              For heterogeneous collections.</li>
+          </ul>
+          <p class="small muted">Bounds like <code class="inl">T: Send + Clone</code> say "any type that can do these" —
+            generic code that's still fully type-checked.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>netwatch — src/dpi/mod.rs</span></div><div data-rust><script type="text/plain">// shared behavior, defined once
+pub trait Classifier {
+    fn classify(&self, payload: &[u8], is_tcp: bool)
+        -> Option<AppProtocol>;
+}
+
+// implemented per type
+impl Classifier for TlsClassifier {
+    fn classify(&self, payload: &[u8], _tcp: bool)
+        -> Option<AppProtocol> {
+        (payload.first()? == &0x16)        // TLS record
+            .then_some(AppProtocol::Tls)
+    }
+}
+
+// static dispatch — monomorphized, zero-cost:
+fn run<C: Classifier>(c: &C, p: &[u8]) { /* ... */ }</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13 ─ Option / no null -->
+  <section class="slide" data-title="No null" data-act="III · Types that work for you">
+    <div class="wrap">
+      <p class="kick">The billion-dollar mistake, designed out</p>
+      <h2>Absence is a type: <code class="inl">Option&lt;T&gt;</code></h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Rust has no <code class="inl">null</code>. A value that might be missing has type
+            <code class="inl">Option&lt;T&gt;</code> — either <code class="inl">Some(v)</code> or
+            <code class="inl">None</code> — and the compiler forces you to handle the <code class="inl">None</code>
+            case before you can touch the value.</p>
+          <ul class="clean">
+            <li>No more accidental null dereferences — the absent case is visible in the type and checked at compile
+              time.</li>
+            <li>Rich <b>combinators</b> instead of null checks: <code class="inl">map</code>,
+              <code class="inl">unwrap_or</code>, <code class="inl">and_then</code>, <code class="inl">ok_or</code>.</li>
+            <li><code class="inl">?</code> works on <code class="inl">Option</code> too — propagate "nothing here" cleanly.</li>
+          </ul>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>handling absence, explicitly</span></div><div data-rust><script type="text/plain">// a missing value is in the type, not a magic null
+let port: Option<u16> = header.dest_port();
+
+let p = port.unwrap_or(0);          // a default
+let shown = port.map(|p| p.to_string()); // transform if Some
+let p = port.ok_or("missing port")?;     // None → Err, then ?
+
+// you simply cannot use `port` as a u16 without first
+// confronting the None case. The compiler insists.</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 14 ─ Iterators (INTERACTIVE pipeline) -->
+  <section class="slide" data-title="Iterators &amp; closures" data-act="IV · Real work">
+    <div class="wrap">
+      <p class="kick">The functional core — lazy and zero-cost</p>
+      <h2>Chains that compile down to a tight loop</h2>
+      <p class="lede" style="max-width:84ch">Iterator adapters (<code class="inl">filter</code>,
+        <code class="inl">map</code>, …) are <b class="hl">lazy</b>: they build a recipe and do nothing until a consumer
+        like <code class="inl">collect</code> pulls. Each element is dragged through the whole chain, one at a time.
+        Step it.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4><code style="color:var(--peach)">(1..=6).filter(|n| n%2==0).map(|n| n*n).collect()</code></h4></div>
+        <div class="pipe" id="itPipe">
+          <div class="pstage" data-s="0"><div class="pz">source</div><div class="pt" id="itSrc">n = –</div><div class="pd">1..=6, pulled one at a time</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="1"><div class="pz">filter</div><div class="pt" id="itFil">even?</div><div class="pd">keep n % 2 == 0</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="2"><div class="pz">map</div><div class="pt" id="itMap">n * n</div><div class="pd">square the survivors</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="3"><div class="pz">collect</div><div class="pt" id="itCol">Vec</div><div class="pd">drives the whole chain</div></div>
+        </div>
+        <div style="margin-top:12px;font-family:var(--mono);font-size:13px;color:var(--subtext)">result: <b id="itResult" style="color:var(--green)">[]</b></div>
+        <div class="controls">
+          <button class="btn primary" id="itPlay">▶ Play</button>
+          <button class="btn" id="itStep">Step element</button>
+          <button class="btn" id="itReset">Reset</button>
+          <span class="small muted" id="itNote" style="margin-left:6px"></span>
+        </div>
+      </div>
+      <p class="cap">Zero-cost abstraction: this chain optimizes to the same machine code as a hand-written
+        <code class="inl">for</code> loop. Closures (<code class="inl">|n| n*n</code>) capture their environment and
+        cost nothing extra.</p>
+    </div>
+  </section>
+
+  <!-- 15 ─ Smart pointers -->
+  <section class="slide" data-title="Smart pointers" data-act="IV · Real work">
+    <div class="wrap">
+      <p class="kick">When single-owner-on-the-stack isn't enough</p>
+      <h2>Heap, sharing, and interior mutability — opt in by type</h2>
+      <div class="grid2">
+        <div class="card"><h4><code class="inl">Box&lt;T&gt;</code> <span class="loc">heap, one owner</span></h4><p>Put a
+          value on the heap with a single owner. For recursive types, large values, or storing a
+          <code class="inl">dyn Trait</code>.</p></div>
+        <div class="card"><h4><code class="inl">Rc&lt;T&gt;</code> <span class="loc">shared, 1 thread</span></h4><p>
+          Reference-counted shared ownership within one thread. The value drops when the last
+          <code class="inl">Rc</code> does. Not thread-safe (cheap, non-atomic count).</p></div>
+        <div class="card"><h4><code class="inl">Arc&lt;T&gt;</code> <span class="loc">shared, threads</span></h4><p>
+          Atomic <code class="inl">Rc</code> — shared ownership <i>across</i> threads. The "A" is the only difference,
+          and it's what makes it <code class="inl">Send</code>.</p></div>
+        <div class="card"><h4><code class="inl">RefCell&lt;T&gt;</code> <span class="loc">runtime borrow check</span></h4><p>
+          Interior mutability: mutate through a shared reference, with the borrow rules checked <i>at runtime</i>
+          (panics on violation) instead of compile time.</p></div>
+        <div class="card"><h4><code class="inl">Arc&lt;Mutex&lt;T&gt;&gt;</code> <span class="loc">← netwatch</span></h4><p>
+          The standard "shared mutable state across threads" combo. NetWatch's collectors live behind exactly this —
+          the next slide.</p></div>
+        <div class="card"><h4>The pattern</h4><p>Reach for these only when ownership truly needs to be shared or
+          deferred. Most code is plain owned values and borrows — these are the deliberate exceptions.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 16 ─ Fearless concurrency (INTERACTIVE) -->
+  <section class="slide" data-title="Fearless concurrency" data-act="IV · Real work">
+    <div class="wrap">
+      <p class="kick">Data races are a compile error</p>
+      <h2>The ownership rules extend straight to threads</h2>
+      <p class="lede" style="max-width:84ch">Aliasing-XOR-mutation isn't just for one thread — it's exactly the rule
+        that prevents <b class="hl">data races</b>. The compiler tracks two auto-traits,
+        <code class="inl">Send</code> (safe to move to another thread) and <code class="inl">Sync</code> (safe to share),
+        and refuses unsafe sharing. Toggle the two approaches:</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">explore</span><h4>two threads, one piece of data</h4></div>
+        <div class="seg" id="ccMode" style="margin-bottom:11px">
+          <button class="btn on" data-m="raw">share &amp;mut directly</button>
+          <button class="btn" data-m="arc">Arc&lt;Mutex&lt;T&gt;&gt;</button>
+        </div>
+        <div class="cols" style="gap:20px">
+          <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>does it compile?</span></div><pre><code id="ccCode"></code></pre></div>
+          <div style="align-self:center"><div class="tlverdict" id="ccVerdict"></div></div>
+        </div>
+      </div>
+      <p class="cap">NetWatch's collectors share state as <code class="inl">Arc&lt;Mutex&lt;T&gt;&gt;</code> and stream
+        events over an <code class="inl">mpsc</code> channel — the compiler guarantees no collector thread can race the
+        UI thread. That guarantee is free at runtime.</p>
+    </div>
+  </section>
+
+  <!-- 17 ─ Drop / RAII -->
+  <section class="slide" data-title="Drop &amp; RAII" data-act="IV · Real work">
+    <div class="wrap">
+      <p class="kick">Cleanup is tied to ownership</p>
+      <h2>When the owner goes, the cleanup runs — deterministically</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">There's no <code class="inl">finally</code>, no <code class="inl">defer</code>, no
+            garbage-collector finalizer-someday. A value's <code class="inl">Drop</code> runs the <i>instant</i> its
+            owner leaves scope — including on early return or panic.</p>
+          <ul class="clean">
+            <li><b>RAII everywhere.</b> A file closes, a lock unlocks, a socket detaches — because the guard owning it
+              was dropped.</li>
+            <li><b>You rarely write <code class="inl">Drop</code></b> by hand; you compose types that already clean up
+              after themselves.</li>
+            <li><b>Deterministic, not eventual.</b> You know exactly when resources are released — the closing brace.</li>
+          </ul>
+          <p class="small muted">This is the same mechanism behind <code class="inl">MutexGuard</code> unlocking and
+            NetWatch's eBPF handle detaching the kprobe.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>netwatch — src/ebpf/source.rs</span></div><div data-rust><script type="text/plain">// dropping the handle tears everything down — no
+// explicit cleanup call anywhere in the codebase
+impl Drop for EventSource {
+    fn drop(&mut self) {
+        // closing the Bpf fd detaches the kprobe;
+        // signal the reader thread to stop.
+        self.shutdown.store(true, Ordering::Relaxed);
+    }
+}   // runs the moment an EventSource leaves scope,
+    // even via `?` early-return or a panic unwind</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 18 ─ The toolchain -->
+  <section class="slide" data-title="The toolchain" data-act="V · Ecosystem &amp; path">
+    <div class="wrap">
+      <p class="kick">The reason day-to-day Rust is pleasant</p>
+      <h2>One tool, batteries included</h2>
+      <div class="cols">
+        <div>
+          <p class="lede"><code class="inl">cargo</code> is build system, package manager, test runner, and doc
+            generator in one. The cohesion is a feature: every project works the same way, and the ecosystem composes.</p>
+          <ul class="clean">
+            <li><b><code class="inl">crates.io</code></b> — one registry; <code class="inl">cargo add</code> and a
+              version is wired in, dependencies resolved.</li>
+            <li><b><code class="inl">clippy</code></b> — 600+ lints that catch real bugs and teach idioms as you go.</li>
+            <li><b><code class="inl">rustfmt</code></b> — one canonical style; formatting debates simply don't happen.</li>
+            <li><b><code class="inl">rust-analyzer</code></b> — a world-class language server: types, completions, and
+              the borrow checker's reasoning live in your editor.</li>
+          </ul>
+          <p class="small muted">Tests and docs are first-class: <code class="inl">cargo test</code> runs unit, integration,
+            and even the examples inside your doc comments.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>a day with cargo</span></div><div data-rust><script type="text/plain">cargo new myapp        // scaffold a project
+cargo add tokio        // pull a crate from crates.io
+cargo build            // compile (cargo drives rustc)
+cargo test             // tests are built into the language
+cargo clippy           // 600+ lints, real mistakes caught
+cargo fmt              // one canonical style, no debates
+cargo doc --open       // generate + view your API docs</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 19 ─ unsafe -->
+  <section class="slide" data-title="unsafe, honestly" data-act="V · Ecosystem &amp; path">
+    <div class="wrap">
+      <p class="kick">The escape hatch — and what it does NOT turn off</p>
+      <h2><code class="inl">unsafe</code> is a promise, not a free-for-all</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Sometimes you must do what the compiler can't verify — talk to hardware, FFI, or read raw
+            kernel memory. <code class="inl">unsafe</code> unlocks exactly five extra powers, and <b class="hl">nothing
+            else</b>.</p>
+          <ul class="clean">
+            <li>It lets you <b>dereference raw pointers</b>, call <code class="inl">unsafe</code> fns, and a few more —
+              that's the whole list.</li>
+            <li>It does <b>not</b> disable the borrow checker, type checking, or ownership for everything else.</li>
+            <li>It's a <b>promise</b>: "I've upheld the invariants the compiler can't see." Your job is to wrap it in a
+              <i>sound</i> safe API.</li>
+          </ul>
+          <p class="small muted">Good Rust isolates <code class="inl">unsafe</code> to tiny, audited blocks behind safe
+            interfaces — so the unsafety is contained, not spread.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>netwatch — the eBPF kprobe</span></div><div data-rust><script type="text/plain">// reading kernel memory is inherently unverifiable
+// by the compiler — so it's an explicit unsafe block,
+// wrapped in a fault-safe helper that returns a Result.
+let daddr = unsafe {
+    bpf_probe_read_kernel::<u32>(
+        uaddr.add(0x04) as *const u32,
+    )
+}.unwrap_or(0);
+
+// everything AROUND this block is still fully checked:
+// ownership, borrows, types — unsafe didn't switch
+// any of that off. Only the raw-pointer read is opted in.</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 20 ─ When to reach for Rust + resources -->
+  <section class="slide" data-title="When &amp; where next" data-act="V · Ecosystem &amp; path">
+    <div class="wrap">
+      <p class="kick">The right tool, and how to keep learning</p>
+      <h2>Where Rust earns its learning curve</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Rust shines where <b class="hl">correctness and control both matter</b> — and the ownership
+            tax pays for itself.</p>
+          <ul class="clean">
+            <li><b>Systems &amp; infra</b> — networking, databases, OS components, embedded. Predictable performance, no
+              GC pauses.</li>
+            <li><b>Anything concurrent</b> — the compiler eliminates data races, so aggressive parallelism is safe.</li>
+            <li><b>Long-lived, high-stakes code</b> — the type system encodes invariants that survive refactors and new
+              maintainers.</li>
+            <li><b>CLI / TUI tools</b> — fast startup, single static binary, great libraries (exactly NetWatch's niche).</li>
+          </ul>
+          <p class="small muted">Reach for a GC'd language when iteration speed beats control and a few ms of pause
+            don't matter. Rust is a deliberate trade, not a default.</p>
+        </div>
+        <div>
+          <div class="card" style="margin-bottom:10px"><h4>Keep learning</h4><p><b>The Book</b>
+            (<code class="inl">doc.rust-lang.org/book</code>) — the canonical intro. <b>Rustlings</b> — fix-the-code
+            exercises. <b>Rust by Example</b> — runnable snippets. <b>std docs</b> — superb and searchable.</p></div>
+          <div class="card"><h4>The way in is to write it</h4><p>Port a small tool you already understand. Let the
+            compiler teach you ownership through its errors — they're unusually good. Lean on
+            <code class="inl">clippy</code> and <code class="inl">rust-analyzer</code> as live tutors.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 21 ─ Recap -->
+  <section class="slide" data-title="What you just toured" data-act="Recap">
+    <div class="wrap">
+      <p class="kick">The whole map, once more</p>
+      <h2>It all comes back to ownership</h2>
+      <div class="grid2">
+        <div class="card"><h4>The bargain <span class="loc">Act I</span></h4><p>Safety without a GC, proven at compile
+          time. One value, one owner; move, copy, or clone — borrow by default.</p></div>
+        <div class="card"><h4>Ownership <span class="loc">Act II</span></h4><p>Shared <code class="inl">&amp;</code> XOR
+          exclusive <code class="inl">&amp;mut</code>; the borrow checker enforces it; lifetimes ensure a borrow never
+          outlives its owner.</p></div>
+        <div class="card"><h4>Types that work <span class="loc">Act III</span></h4><p>Enums + exhaustive
+          <code class="inl">match</code>; errors as <code class="inl">Result</code> with <code class="inl">?</code>;
+          traits for shared behavior; <code class="inl">Option</code> instead of null.</p></div>
+        <div class="card"><h4>Real work <span class="loc">Act IV</span></h4><p>Lazy zero-cost iterators; smart pointers
+          for sharing; data races as compile errors; deterministic <code class="inl">Drop</code>.</p></div>
+        <div class="card"><h4>Ecosystem <span class="loc">Act V</span></h4><p>cargo + clippy + rust-analyzer; and
+          <code class="inl">unsafe</code> as a small, audited promise — not a disabling of the rules.</p></div>
+        <div class="card"><h4>The throughline</h4><p>Every feature is a consequence of ownership. Once it clicks, the
+          borrow checker is a collaborator, not an obstacle — it's catching your bugs at compile time.</p></div>
+      </div>
+      <p class="cap" style="margin-top:14px">Press <kbd>O</kbd> for the full map · <kbd>←</kbd> to revisit any
+        simulation. The fight with the borrow checker is the learning — and it ends.</p>
+    </div>
+  </section>
+
+</main>
+
+<div id="overview"><h3>Jump to a stop — <span class="muted">click any, or press O to close</span></h3><div class="ovgrid" id="ovgrid"></div></div>
+
+<script>
+/* ── safe single-pass Rust highlighter (escapes as it goes) ──────────────── */
+var KW={fn:1,let:1,mut:1,pub:1,'struct':1,'enum':1,impl:1,trait:1,'for':1,'in':1,'if':1,'else':1,match:1,
+  'return':1,'while':1,loop:1,'break':1,'continue':1,'use':1,mod:1,'as':1,'where':1,'type':1,'dyn':1,
+  'move':1,'ref':1,'static':1,'const':1,unsafe:1,async:1,await:1,'self':1,Self:1,'crate':1,'super':1,
+  Some:1,None:1,Ok:1,Err:1,'true':1,'false':1};
+var TY={u8:1,u16:1,u32:1,u64:1,usize:1,i8:1,i16:1,i32:1,i64:1,isize:1,f32:1,f64:1,bool:1,char:1,str:1,
+  String:1,Vec:1,Box:1,Rc:1,Arc:1,Mutex:1,RwLock:1,RefCell:1,Cell:1,Option:1,Result:1,HashMap:1,
+  Receiver:1,Sender:1,Classifier:1,AppProtocol:1,EbpfStatus:1};
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function span(c,s){return '<span class="'+c+'">'+esc(s)+'</span>';}
+function hlRust(src){
+  var out='',i=0,n=src.length;
+  while(i<n){
+    var c=src[i];
+    if(c==='/'&&src[i+1]==='/'){ var j=src.indexOf('\n',i); if(j<0)j=n; out+=span('cmt',src.slice(i,j)); i=j; continue; }
+    if(c==='/'&&src[i+1]==='*'){ var j0=src.indexOf('*/',i); j0=j0<0?n:j0+2; out+=span('cmt',src.slice(i,j0)); i=j0; continue; }
+    if(c==='#'&&(src[i+1]==='['||(src[i+1]==='!'&&src[i+2]==='['))){ var k=src.indexOf(']',i); if(k<0)k=n-1; out+=span('attr',src.slice(i,k+1)); i=k+1; continue; }
+    if(c==='"'){ var j1=i+1; while(j1<n&&src[j1]!=='"'){ if(src[j1]==='\\')j1++; j1++; } if(src[j1]==='"')j1++; out+=span('str',src.slice(i,j1)); i=j1; continue; }
+    if(c==="'"){ // lifetime 'a  vs  char literal 'a'
+      if(/[A-Za-z_]/.test(src[i+1]||'') && src[i+2]!=="'"){ var j2=i+1; while(j2<n&&/[A-Za-z0-9_]/.test(src[j2]))j2++; out+=span('lt',src.slice(i,j2)); i=j2; continue; }
+      var j3=i+1; while(j3<n&&src[j3]!=="'"&&src[j3]!=='\n'){ if(src[j3]==='\\')j3++; j3++; } if(src[j3]==="'")j3++; out+=span('str',src.slice(i,j3)); i=j3; continue;
+    }
+    if(/[A-Za-z_]/.test(c)){ var j4=i+1; while(j4<n&&/[A-Za-z0-9_]/.test(src[j4]))j4++; var w=src.slice(i,j4);
+      if(src[j4]==='!'){ out+=span('mac',w+'!'); i=j4+1; continue; }
+      out+= KW[w]?span('kw',w):(TY[w]?span('ty',w):esc(w)); i=j4; continue; }
+    if(/[0-9]/.test(c)){ var j5=i+1; while(j5<n&&/[0-9a-fA-FxX_uif]/.test(src[j5]))j5++; out+=span('num',src.slice(i,j5)); i=j5; continue; }
+    out+=esc(c); i++;
+  }
+  return out;
+}
+document.querySelectorAll('[data-rust] script[type="text/plain"]').forEach(function(s){
+  var pre=document.createElement('pre'),code=document.createElement('code');
+  code.innerHTML=hlRust(s.textContent); pre.appendChild(code); s.parentNode.replaceChild(pre,s);
+});
+
+/* ── deck engine ─────────────────────────────────────────────────────────── */
+var slides=[].slice.call(document.querySelectorAll('.slide'));
+var cur=0;
+var elProg=document.getElementById('progress'),elNum=document.getElementById('cnum'),
+    elTot=document.getElementById('ctot'),elAct=document.getElementById('act');
+elTot.textContent=String(slides.length).padStart(2,'0');
+function fit(slide){ var w=slide.querySelector('.wrap'); if(!w)return;
+  w.style.transform='translate(-50%,-50%) scale(1)';
+  var pad=54, vh=window.innerHeight-pad*2, vw=window.innerWidth-pad*2;
+  var r=w.getBoundingClientRect(); var s=Math.min(1, vw/r.width, vh/r.height);
+  w.style.transform='translate(-50%,-50%) scale('+s+')'; }
+function fitActive(){ fit(slides[cur]); }
+function go(i){ i=Math.max(0,Math.min(slides.length-1,i));
+  if(i===cur && slides[cur].classList.contains('active')){fit(slides[cur]);return;}
+  slides[cur].classList.remove('active'); cur=i; slides[cur].classList.add('active'); slides[cur].scrollTop=0;
+  elProg.style.width=((cur)/(slides.length-1)*100)+'%';
+  elNum.textContent=String(cur+1).padStart(2,'0'); elAct.textContent=slides[cur].getAttribute('data-act')||'';
+  location.hash=String(cur+1);
+  requestAnimationFrame(fitActive); requestAnimationFrame(function(){requestAnimationFrame(fitActive);});
+  onEnter(cur); }
+window.addEventListener('keydown',function(e){
+  if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){go(cur+1);e.preventDefault();}
+  else if(e.key==='ArrowLeft'||e.key==='PageUp'){go(cur-1);e.preventDefault();}
+  else if(e.key==='Home'){go(0);}else if(e.key==='End'){go(slides.length-1);}
+  else if(e.key==='o'||e.key==='O'){toggleOverview();}
+  else if(e.key==='f'||e.key==='F'){fitActive();}
+  else if(e.key==='Escape'){document.getElementById('overview').classList.remove('open');}
+});
+window.addEventListener('resize',fitActive);
+var ov=document.getElementById('overview'),ovg=document.getElementById('ovgrid');
+slides.forEach(function(s,i){ var d=document.createElement('div');d.className='ov';
+  d.innerHTML='<span class="num">'+String(i+1).padStart(2,'0')+'</span><span class="t">'+
+    (s.getAttribute('data-title')||'')+'<span class="az">'+(s.getAttribute('data-act')||'')+'</span></span>';
+  d.onclick=function(){go(i);toggleOverview();}; ovg.appendChild(d); });
+function toggleOverview(){ov.classList.toggle('open');}
+
+function onEnter(i){
+  var t=slides[i].getAttribute('data-title');
+  if(t==='The borrow checker') bcReset();
+  else if(t==='Lifetimes') ltReset();
+  else if(t==='Iterators &amp; closures') itReset();
+}
+
+/* ── move visualizer (slide 5) ───────────────────────────────────────────── */
+var MV={
+  move:{code:'let s = String::from("netwatch");\nlet t = s;            // MOVE: s → t\nprintln!("{s}");      // ← use after move',
+    diag:[['heap','"netwatch"  —  owned by <span class="own">t</span>'],['dead','<span class="own">s</span>  —  invalid (moved out)']],
+    v:{cls:'bad',t:'✗ E0382: borrow of moved value: `s`. Ownership moved into `t`; the source binding `s` is dead. One value, one owner.'}},
+  clone:{code:'let s = String::from("netwatch");\nlet t = s.clone();    // deep copy\nprintln!("{s} {t}");  // both fine',
+    diag:[['heap','"netwatch"  —  owned by <span class="own">s</span>'],['heap','"netwatch"  —  owned by <span class="own">t</span>  (separate alloc)']],
+    v:{cls:'good',t:'✓ Compiles. clone() made an independent deep copy — two owners, two allocations, each freed when its owner drops.'}},
+  borrow:{code:'let s = String::from("netwatch");\nlet t = &s;           // borrow, no ownership\nprintln!("{s} {t}");  // both fine',
+    diag:[['heap','"netwatch"  —  owned by <span class="own">s</span>'],['','<span class="ref">t = &amp;s</span>  —  a reference, owns nothing']],
+    v:{cls:'good',t:'✓ Compiles. `t` borrows `s` without taking ownership; `s` stays valid. `t` simply must not outlive `s`.'}}
+};
+var mvMode='move';
+function mvRender(){ var d=MV[mvMode];
+  document.getElementById('mvCode').innerHTML=hlRust(d.code);
+  document.getElementById('mvDiag').innerHTML=d.diag.map(function(x){return '<div class="mvbox '+x[0]+'">'+x[1]+'</div>';}).join('');
+  var ve=document.getElementById('mvVerdict'); ve.className='tlverdict '+d.v.cls; ve.innerHTML=d.v.t; }
+[].forEach.call(document.querySelectorAll('#mvMode .btn'),function(b){
+  b.onclick=function(){ mvMode=b.getAttribute('data-m');
+    [].forEach.call(document.querySelectorAll('#mvMode .btn'),function(c){c.classList.toggle('on',c===b);}); mvRender(); }; });
+mvRender();
+
+/* ── borrow-checker stepper (slide 7) ────────────────────────────────────── */
+var BC={
+  shared:{steps:[
+    {x:'1',t:'let mut v = vec![1, 2, 3];',d:'v owns the vec',live:[]},
+    {x:'2',t:'let a = &v;',d:'shared borrow #1',live:['a: &v']},
+    {x:'3',t:'let b = &v;',d:'shared borrow #2',live:['a: &v','b: &v']},
+    {x:'4',t:'println!("{a:?} {b:?}");',d:'both read — fine',live:['a: &v','b: &v']},
+    {x:'⏚',t:'borrows end · exit',d:'',live:[],exit:1,verdict:{cls:'good',msg:'✓ ACCEPTED — any number of shared (&) borrows may coexist. Reading never conflicts with reading.'}}
+  ]},
+  twomut:{steps:[
+    {x:'1',t:'let mut v = vec![1, 2, 3];',d:'v owns the vec',live:[]},
+    {x:'2',t:'let a = &mut v;',d:'exclusive borrow #1',live:['a: &mut v']},
+    {x:'✗',t:'let b = &mut v;',d:'second &mut while a is live',live:['a: &mut v'],bad:1,
+      verdict:{cls:'bad',msg:'✗ E0499: cannot borrow `v` as mutable more than once at a time. Exactly one &mut may exist — that exclusivity is what prevents data races.'}}
+  ]},
+  mixed:{steps:[
+    {x:'1',t:'let mut v = vec![1, 2, 3];',d:'v owns the vec',live:[]},
+    {x:'2',t:'let a = &v;',d:'shared borrow',live:['a: &v']},
+    {x:'✗',t:'let b = &mut v;',d:'&mut while a shared borrow is live',live:['a: &v'],bad:1,
+      verdict:{cls:'bad',msg:'✗ E0502: cannot borrow `v` as mutable because it is also borrowed as immutable. Aliasing XOR mutation — never both.'}}
+  ]}
+};
+var bcMode='shared', bcIdx=-1, bcTimer=null;
+var elBcSteps=document.getElementById('bcSteps'), elBcState=document.getElementById('bcState');
+function bcRender(){ var steps=BC[bcMode].steps, html='';
+  steps.forEach(function(s,k){ var cls=k<bcIdx?'done':(k===bcIdx?(s.bad?'bad cur':'cur'):'');
+    html+='<div class="ln '+cls+'"><span class="lx">'+s.x+'</span><span>'+hlRust(s.t)+'</span><span class="ld">'+s.d+'</span></div>'; });
+  elBcSteps.innerHTML=html;
+  var s=steps[bcIdx], st='';
+  if(bcIdx>=0){ var live=s.live&&s.live.length?s.live.join(' · '):'none'; st='<span class="live">live borrows: <b>'+live+'</b></span>'; }
+  if(s&&s.verdict&&(s.exit||s.bad)) st+='<span class="vd '+s.verdict.cls+'">'+s.verdict.msg+'</span>';
+  elBcState.innerHTML=st; }
+function bcStep(){ var st=BC[bcMode].steps; if(bcIdx<st.length-1){bcIdx++;bcRender();} return bcIdx<st.length-1; }
+function bcReset(){ if(bcTimer){clearInterval(bcTimer);bcTimer=null;} bcIdx=-1; bcRender(); }
+function bcRun(){ if(bcTimer){clearInterval(bcTimer);bcTimer=null;return;} if(bcIdx>=BC[bcMode].steps.length-1)bcReset();
+  bcTimer=setInterval(function(){ if(!bcStep()){clearInterval(bcTimer);bcTimer=null;} },800); }
+document.getElementById('bcStep').onclick=function(){ if(bcTimer){clearInterval(bcTimer);bcTimer=null;} bcStep(); };
+document.getElementById('bcRun').onclick=bcRun;
+document.getElementById('bcReset').onclick=bcReset;
+[].forEach.call(document.querySelectorAll('#bcMode .btn'),function(b){
+  b.onclick=function(){ bcMode=b.getAttribute('data-m');
+    [].forEach.call(document.querySelectorAll('#bcMode .btn'),function(c){c.classList.toggle('on',c===b);}); bcReset(); }; });
+bcRender();
+
+/* ── lifetime scrubber (slide 8) ─────────────────────────────────────────── */
+var LT={
+  ok:[
+    {m:'let x = 5;', owner:'alive', borrow:'—', v:{cls:'good',t:'x is created and owns its value. No borrow yet.'}},
+    {m:'let r = &x;', owner:'alive', borrow:'&x (valid)', v:{cls:'good',t:'r borrows x. The borrow’s lifetime starts inside x’s — perfectly nested.'}},
+    {m:'println!("{r}");', owner:'alive', borrow:'&x (valid)', v:{cls:'good',t:'r is used while x is still alive. The checker is happy.'}},
+    {m:'} end of scope', owner:'dropped', borrow:'ended', v:{cls:'good',t:'✓ Compiles. r’s borrow ended before x dropped — the borrow never outlived the owner.'}}
+  ],
+  dangle:[
+    {m:'let r;', owner:'—', borrow:'—', v:{cls:'good',t:'r is declared in the outer scope, not yet assigned.'}},
+    {m:'{ let x = 5;', owner:'alive (inner)', borrow:'—', v:{cls:'good',t:'x is created in an INNER scope — it will drop at the inner closing brace.'}},
+    {m:'  r = &x; }', owner:'dropped', borrow:'&x → dangling', v:{cls:'bad',t:'r is set to borrow x — but the inner scope ends here, so x is dropped. r now refers to freed memory.'}},
+    {m:'println!("{r}");', owner:'dropped', borrow:'dangling', v:{cls:'bad',t:'✗ E0597: `x` does not live long enough. r outlives x. In C this is a use-after-free; in Rust it simply won’t compile.'}}
+  ]
+};
+var ltMode='ok';
+var elLtRange=document.getElementById('ltRange'),elLtMarks=document.getElementById('ltMarks'),
+    elLtOwner=document.getElementById('ltOwner'),elLtBorrow=document.getElementById('ltBorrow'),elLtVerdict=document.getElementById('ltVerdict');
+function ltRender(){ var seq=LT[ltMode], p=+elLtRange.value, s=seq[p];
+  var mk=''; seq.forEach(function(d,k){ mk+='<div class="tm'+(k===p?' on':'')+'">'+d.m.replace(/</g,'&lt;')+'</div>'; });
+  elLtMarks.innerHTML=mk;
+  var oOk=s.owner==='alive'||s.owner==='alive (inner)';
+  elLtOwner.innerHTML='<h5>owner — x</h5><div class="row"><span>state</span><span class="v '+(oOk?'ok':(s.owner==='—'?'na':'no'))+'">'+s.owner+'</span></div>';
+  var bDangle=/dangling/.test(s.borrow); var bOk=/valid/.test(s.borrow);
+  elLtBorrow.innerHTML='<h5>borrow — r</h5><div class="row"><span>refers to</span><span class="v '+(bDangle?'no':(bOk?'ok':'na'))+'">'+s.borrow+'</span></div>';
+  elLtVerdict.className='tlverdict '+s.v.cls; elLtVerdict.innerHTML=s.v.t; }
+elLtRange.oninput=ltRender;
+function ltReset(){ elLtRange.value=0; ltRender(); }
+[].forEach.call(document.querySelectorAll('#ltMode .btn'),function(b){
+  b.onclick=function(){ ltMode=b.getAttribute('data-m');
+    [].forEach.call(document.querySelectorAll('#ltMode .btn'),function(c){c.classList.toggle('on',c===b);}); ltReset(); }; });
+ltRender();
+
+/* ── iterator pipeline (slide 14) ────────────────────────────────────────── */
+var IT_SRC=[1,2,3,4,5,6], itIdx=-1, itResult=[], itTimer=null;
+var itStages=[].slice.call(document.querySelectorAll('#itPipe .pstage'));
+function itPaint(reached, kept, n, sq){
+  itStages.forEach(function(s,k){ s.classList.toggle('lit', k<=reached); });
+  if(!kept && reached>=1) itStages[1].classList.add('lit'); // filter shown even on drop
+  document.getElementById('itSrc').innerHTML = n==null?'n = –':'n = '+n;
+  document.getElementById('itFil').innerHTML = n==null?'even?':(kept?'<span style="color:var(--green)">keep</span>':'<span style="color:var(--red)">drop</span>');
+  document.getElementById('itMap').innerHTML = (n!=null&&kept)?('→ '+sq):'n * n';
+  document.getElementById('itCol').innerHTML = 'Vec';
+  document.getElementById('itResult').textContent='['+itResult.join(', ')+']';
+}
+function itStep(){
+  if(itIdx>=IT_SRC.length-1){ document.getElementById('itNote').textContent='done — collect() returned the Vec.'; return false; }
+  itIdx++; var n=IT_SRC[itIdx], kept=(n%2===0), sq=n*n;
+  if(kept) itResult.push(sq);
+  itPaint(kept?3:1, kept, n, sq);
+  document.getElementById('itNote').textContent = 'pull '+(itIdx+1)+'/6: '+n+(kept?(' is even → '+n+'·'+n+' = '+sq+' → push'):' is odd → dropped, never reaches map');
+  return itIdx<IT_SRC.length-1;
+}
+function itReset(){ if(itTimer){clearInterval(itTimer);itTimer=null;} itIdx=-1; itResult=[];
+  itStages.forEach(function(s){s.classList.remove('lit');}); itPaint(-1,false,null,null);
+  document.getElementById('itNote').textContent=''; var b=document.getElementById('itPlay'); if(b)b.textContent='▶ Play'; }
+function itPlay(){ var b=document.getElementById('itPlay');
+  if(itTimer){clearInterval(itTimer);itTimer=null;b.textContent='▶ Play';return;}
+  if(itIdx>=IT_SRC.length-1)itReset(); b.textContent='❚❚ Pause';
+  itTimer=setInterval(function(){ if(!itStep()){clearInterval(itTimer);itTimer=null;b.textContent='↻ Replay';} },820); }
+document.getElementById('itPlay').onclick=itPlay;
+document.getElementById('itStep').onclick=function(){ if(itTimer){clearInterval(itTimer);itTimer=null;document.getElementById('itPlay').textContent='▶ Play';} itStep(); };
+document.getElementById('itReset').onclick=itReset;
+itReset();
+
+/* ── concurrency toggle (slide 16) ───────────────────────────────────────── */
+var CC={
+  raw:{code:'let mut data = vec![1, 2, 3];\n\n// two threads, both want to mutate `data`\nthread::spawn(|| data.push(4));\nthread::spawn(|| data.push(5));\n// aliased &mut across threads — a data race',
+    v:{cls:'bad',t:'✗ Won’t compile (E0373/E0499): a closure can’t borrow `data` and outlive the scope across threads, and two &mut can never coexist. The data race is a build error — not a runtime gamble.'}},
+  arc:{code:'let shared = Arc::new(Mutex::new(vec![1, 2, 3]));\nlet s2 = Arc::clone(&shared);\n\nthread::spawn(move || s2.lock().unwrap().push(4));\nshared.lock().unwrap().push(5);   // serialized',
+    v:{cls:'good',t:'✓ Compiles. Arc shares ownership across threads (atomic refcount); Mutex serializes mutation. Send + Sync are auto-checked — exactly NetWatch’s collector pattern.'}}
+};
+var ccMode='raw';
+function ccRender(){ var d=CC[ccMode];
+  document.getElementById('ccCode').innerHTML=hlRust(d.code);
+  var v=document.getElementById('ccVerdict'); v.className='tlverdict '+d.v.cls; v.innerHTML=d.v.t; }
+[].forEach.call(document.querySelectorAll('#ccMode .btn'),function(b){
+  b.onclick=function(){ ccMode=b.getAttribute('data-m');
+    [].forEach.call(document.querySelectorAll('#ccMode .btn'),function(c){c.classList.toggle('on',c===b);}); ccRender(); }; });
+ccRender();
+
+/* ── boot ────────────────────────────────────────────────────────────────── */
+(function(){ var h=parseInt((location.hash||'').replace('#',''),10); go(isFinite(h)&&h>=1?h-1:0); })();
+</script>
+</body>
+</html>

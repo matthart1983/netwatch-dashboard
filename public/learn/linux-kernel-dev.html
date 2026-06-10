@@ -1,0 +1,1063 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Contributing to the Linux kernel — a contributor path</title>
+<style>
+  :root{
+    --crust:#11111b; --mantle:#181825; --base:#1e1e2e;
+    --surface0:#313244; --surface1:#45475a; --surface2:#585b70;
+    --overlay:#6c7086; --subtext:#a6adc8; --text:#cdd6f4;
+    --mauve:#cba6f7; --blue:#89b4fa; --sapphire:#74c7ec; --sky:#89dceb;
+    --green:#a6e3a1; --yellow:#f9e2af; --peach:#fab387; --red:#f38ba8;
+    --pink:#f5c2e7; --teal:#94e2d5; --lavender:#b4befe;
+    --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:
+      radial-gradient(1200px 800px at 82% -12%, #1f2a22 0%, transparent 60%),
+      radial-gradient(1000px 700px at -10% 110%, #1b1b2b 0%, transparent 55%),
+      var(--base);
+    color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden;}
+
+  /* chrome */
+  #progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--green),var(--blue),var(--mauve));width:0;z-index:50;transition:width .25s ease}
+  #brand{position:fixed;top:14px;left:20px;z-index:40;font-family:var(--mono);font-size:13px;letter-spacing:.5px;color:var(--subtext)}
+  #brand b{color:var(--text)} #brand .dot{color:var(--peach)}
+  #act{position:fixed;top:14px;right:20px;z-index:40;font-family:var(--mono);font-size:12px;color:var(--overlay);letter-spacing:.12em;text-transform:uppercase}
+  #counter{position:fixed;bottom:14px;right:20px;z-index:40;font-family:var(--mono);font-size:13px;color:var(--overlay)}
+  #counter b{color:var(--subtext)}
+  #hint{position:fixed;bottom:14px;left:20px;z-index:40;font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  kbd{font-family:var(--mono);background:var(--surface0);border:1px solid var(--surface1);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:.85em;color:var(--text)}
+
+  /* deck */
+  #deck{position:relative;height:100vh;width:100vw}
+  .slide{position:absolute;inset:0;display:none;overflow:hidden;opacity:0;transition:opacity .35s ease}
+  .slide.active{display:block;opacity:1}
+  .wrap{position:absolute;left:50%;top:50%;width:1140px;max-width:92vw;transform:translate(-50%,-50%);transform-origin:center center}
+
+  h1{font-size:clamp(34px,5.5vw,62px);line-height:1.04;margin:0 0 18px;letter-spacing:-.02em}
+  h1 .grad{background:linear-gradient(90deg,var(--green),var(--sapphire),var(--mauve));-webkit-background-clip:text;background-clip:text;color:transparent}
+  h2{font-size:clamp(23px,3.1vw,36px);margin:0 0 4px;letter-spacing:-.01em}
+  .kick{font-family:var(--mono);font-size:12.5px;text-transform:uppercase;letter-spacing:.22em;color:var(--green);margin:0 0 9px}
+  .lede{font-size:clamp(16px,2vw,21px);color:var(--subtext);line-height:1.55;max-width:62ch}
+  p{line-height:1.6} .muted{color:var(--subtext)} .small{font-size:14px} b.hl{color:var(--text)}
+  ul.clean{list-style:none;padding:0;margin:14px 0 0}
+  ul.clean li{padding:7px 0 7px 26px;position:relative;color:var(--subtext);line-height:1.5}
+  ul.clean li::before{content:"▸";position:absolute;left:0;color:var(--green)}
+  ul.clean li b{color:var(--text)}
+  code.inl{font-family:var(--mono);background:var(--surface0);border:1px solid var(--surface1);border-radius:6px;padding:1px 6px;font-size:.88em;color:var(--lavender)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--surface1);color:var(--subtext);margin:0 6px 6px 0;background:var(--mantle)}
+  .tag.k{color:var(--mauve);border-color:#3a2f50} .tag.g{color:var(--green);border-color:#2f4a36} .tag.b{color:var(--blue);border-color:#2b3d5c}
+  .cols{display:grid;grid-template-columns:1.05fr .95fr;gap:34px;align-items:start}
+  @media(max-width:880px){.cols{grid-template-columns:1fr;gap:20px}}
+
+  /* code */
+  .code{position:relative;background:var(--crust);border:1px solid var(--surface0);border-radius:12px;overflow:hidden;box-shadow:0 18px 40px -24px #000}
+  .code .bar{display:flex;align-items:center;gap:7px;padding:9px 13px;background:var(--mantle);border-bottom:1px solid var(--surface0)}
+  .code .bar i{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .code .bar .r{background:#f38ba8}.code .bar .y{background:#f9e2af}.code .bar .g{background:#a6e3a1}
+  .code .bar span{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  pre{margin:0;padding:13px 16px;overflow:auto;font-family:var(--mono);font-size:clamp(11px,1.25vw,13.5px);line-height:1.5;tab-size:4}
+  pre code{white-space:pre}
+  .cap{font-family:var(--mono);font-size:11.5px;color:var(--overlay);margin:8px 2px 0}
+  .cmt{color:var(--overlay);font-style:italic} .str{color:var(--green)} .cmd{color:var(--blue)} .flag{color:var(--peach)} .num{color:var(--peach)} .kw2{color:var(--mauve)}
+
+  /* diagram primitives */
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:6px}
+  .card{background:var(--mantle);border:1px solid var(--surface0);border-radius:12px;padding:14px 16px}
+  .card h4{margin:0 0 6px;font-size:15px;color:var(--text)}
+  .card h4 .loc{font-family:var(--mono);font-size:11px;color:var(--overlay);float:right;font-weight:400}
+  .card p{margin:0;font-size:13.5px;color:var(--subtext);line-height:1.5}
+  .flowv{display:flex;flex-direction:column;gap:0;align-items:center;font-family:var(--mono);margin-top:6px}
+  .flowv .node{min-width:min(560px,86vw);text-align:center;font-size:12.5px;background:var(--surface0);border:1px solid var(--surface1);border-radius:8px;padding:7px 10px;margin:6px 0;color:var(--text)}
+  .flowv .node.k{border-color:#3a2f50;color:var(--mauve)} .flowv .node.g{border-color:#2f4a36;color:var(--green)}
+  .flowv .node.b{border-color:#2b3d5c;color:var(--blue)} .flowv .node.p{border-color:#5c3a44;color:var(--pink)} .flowv .node.y{border-color:#5c512b;color:var(--yellow)}
+  .flowv .down{color:var(--overlay);font-size:20px;line-height:1}
+
+  /* interactive shell */
+  .ix{background:var(--mantle);border:1px solid var(--surface0);border-radius:14px;padding:16px 18px;margin-top:10px}
+  .ix .ixhead{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+  .ix .ixhead .pill{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--green);border:1px solid #2f4a36;border-radius:999px;padding:2px 8px}
+  .ix .ixhead h4{margin:0;font-size:15px;color:var(--text);font-weight:600}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  .btn{font-family:var(--mono);font-size:12.5px;background:var(--surface0);color:var(--text);border:1px solid var(--surface1);border-bottom-width:2px;border-radius:8px;padding:6px 13px;cursor:pointer;transition:.12s;user-select:none}
+  .btn:hover{background:var(--surface1);border-color:var(--surface2)}
+  .btn:active{transform:translateY(1px);border-bottom-width:1px}
+  .btn.primary{color:var(--green);border-color:#2f4a36;background:#16241a}
+  .btn.primary:hover{background:#1b2c20}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}
+  .seg .btn.on{background:var(--green);color:var(--crust);border-color:var(--green)}
+
+  /* tree topology (decoder-style, slide 3) */
+  .treerow{display:flex;flex-wrap:wrap;gap:7px}
+  .tnode{flex:1 1 0;min-width:120px;font-family:var(--mono);font-size:12px;text-align:center;background:var(--surface0);border:1px solid var(--surface1);border-radius:9px;padding:10px 8px;cursor:pointer;transition:.13s;color:var(--text)}
+  .tnode:hover{border-color:var(--surface2)}
+  .tnode.sel{outline:2px solid var(--green);outline-offset:-2px;background:#16241a}
+  .tnode .tt{font-size:12.5px;color:var(--text)} .tnode .ts{font-size:10px;color:var(--overlay);margin-top:4px}
+  .tx-flow{display:flex;align-items:center;justify-content:center;color:var(--overlay);font-family:var(--mono);font-size:11px;margin:10px 0 2px;gap:6px;flex-wrap:wrap}
+  .tx-explain{min-height:78px;font-size:13.5px;color:var(--subtext);line-height:1.55;border-left:2px solid var(--surface1);padding:2px 0 2px 12px;margin-top:12px}
+  .tx-explain b{color:var(--text)} .tx-explain .you{color:var(--green)}
+
+  /* release-cycle scrubber (slide 4) */
+  .tlmarks{display:flex;justify-content:space-between;margin-top:8px;font-family:var(--mono);font-size:10.5px}
+  .tlmarks .tm{flex:1 1 0;text-align:center;color:var(--overlay);line-height:1.3;padding:0 2px;transition:.15s}
+  .tlmarks .tm.on{color:var(--green)} .tlmarks .tm.win{color:var(--mauve)}
+  .tlpanel{background:var(--crust);border:1px solid var(--surface0);border-radius:10px;padding:12px 14px;font-family:var(--mono);font-size:12px}
+  .tlpanel h5{margin:0 0 9px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--subtext)}
+  .tlpanel .row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--mantle)}
+  .tlpanel .v.ok{color:var(--green)} .tlpanel .v.no{color:var(--red)} .tlpanel .v.na{color:var(--overlay)}
+  .tlverdict{margin-top:14px;font-family:var(--mono);font-size:13px;padding:10px 14px;border-radius:9px;line-height:1.5}
+  .tlverdict.win{background:#1e1830;border:1px solid #3a2f50;color:var(--mauve)}
+  .tlverdict.rc{background:#16241a;border:1px solid #2f4a36;color:var(--green)}
+
+  /* build-loop pipeline (slide 7) */
+  .pipe{display:flex;align-items:stretch;gap:0;margin-top:6px;flex-wrap:wrap}
+  .pstage{flex:1 1 0;min-width:118px;background:var(--mantle);border:1px solid var(--surface0);border-radius:12px;padding:12px;position:relative;transition:.25s;opacity:.5}
+  .pstage.lit{opacity:1;border-color:var(--green);box-shadow:0 0 0 1px var(--green),0 10px 30px -16px var(--green)}
+  .pstage .pz{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--overlay)}
+  .pstage .pt{font-size:14px;color:var(--text);margin:5px 0 3px;font-weight:600}
+  .pstage .pd{font-size:11.5px;color:var(--subtext);line-height:1.4}
+  .pconn{align-self:center;color:var(--overlay);font-size:18px;padding:0 4px}
+
+  /* review gauntlet (slide 13) */
+  .vfsteps{font-family:var(--mono);font-size:12px;border:1px solid var(--surface0);border-radius:9px;overflow:hidden}
+  .vfsteps .ln{padding:6px 11px;border-bottom:1px solid var(--mantle);color:var(--overlay);display:flex;gap:9px;transition:.12s;align-items:baseline}
+  .vfsteps .ln:last-child{border-bottom:0}
+  .vfsteps .ln.done{color:var(--subtext)} .vfsteps .ln.done .lx{color:var(--green)}
+  .vfsteps .ln.cur{background:#1c2436;color:var(--text)} .vfsteps .ln.bad{background:#2a1820;color:var(--text)} .vfsteps .ln.bad .lx{color:var(--red)}
+  .vfsteps .ln .lx{flex:0 0 18px;color:var(--blue)}
+  .vfsteps .ln .ld{color:var(--overlay);font-size:11px;margin-left:auto;text-align:right;max-width:50%}
+  .vfstate{display:flex;align-items:center;gap:14px;margin-top:11px;font-family:var(--mono);font-size:12.5px;flex-wrap:wrap}
+  .vfstate .vd{padding:6px 12px;border-radius:8px;line-height:1.4}
+  .vfstate .vd.good{background:#16241a;border:1px solid #2f4a36;color:var(--green)}
+  .vfstate .vd.bad{background:#2a1820;border:1px solid #5c3a44;color:var(--red)}
+  .gtoggles{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .gtoggles .btn.on{background:var(--red);color:var(--crust);border-color:var(--red)}
+
+  /* patch-email decoder (slide 9) */
+  .pmail{font-family:var(--mono);font-size:12px;background:var(--crust);border:1px solid var(--surface0);border-radius:10px;overflow:hidden}
+  .pmail .pl{padding:5px 12px;border-left:3px solid transparent;cursor:pointer;white-space:pre-wrap;transition:.12s;color:var(--subtext)}
+  .pmail .pl:hover{background:var(--mantle)}
+  .pmail .pl.sel{background:#16241a;border-left-color:var(--green);color:var(--text)}
+  .pm-explain{min-height:70px;font-size:13.5px;color:var(--subtext);line-height:1.55;border-left:2px solid var(--surface1);padding:2px 0 2px 12px;margin-top:12px}
+  .pm-explain b{color:var(--text)}
+
+  /* patch journey player (slide 16) */
+  .e2e{display:flex;flex-wrap:wrap;gap:0;align-items:stretch}
+  .e2e .est{flex:1 1 0;min-width:112px;border:1px solid var(--surface0);background:var(--mantle);border-radius:10px;padding:10px;opacity:.4;transition:.25s}
+  .e2e .est.lit{opacity:1;border-color:var(--green);box-shadow:0 0 0 1px var(--green)}
+  .e2e .est.done{opacity:.85;border-color:#2f4a36}
+  .e2e .est .ez{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--overlay)}
+  .e2e .est .et{font-size:12.5px;color:var(--text);margin-top:5px;font-weight:600;line-height:1.25}
+  .e2e .econn{align-self:center;color:var(--overlay);font-size:15px;padding:0 3px}
+  .e2epay{margin-top:13px;background:var(--crust);border:1px solid var(--surface0);border-radius:10px;padding:12px 15px;font-family:var(--mono);font-size:12.5px;color:var(--subtext);min-height:54px;line-height:1.6}
+  .e2epay b{color:var(--text)} .e2epay .g{color:var(--green)} .e2epay .k{color:var(--yellow)} .e2epay .bl{color:var(--blue)}
+
+  /* overview */
+  #overview{position:fixed;inset:0;z-index:60;background:rgba(17,17,27,.94);backdrop-filter:blur(6px);display:none;padding:54px clamp(20px,5vw,80px);overflow:auto}
+  #overview.open{display:block}
+  #overview h3{font-family:var(--mono);color:var(--subtext);font-weight:500;letter-spacing:.1em;text-transform:uppercase;font-size:13px;margin:0 0 18px}
+  .ovgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:11px}
+  .ov{background:var(--mantle);border:1px solid var(--surface0);border-radius:10px;padding:11px 13px;cursor:pointer;transition:.15s;display:flex;gap:10px;align-items:baseline}
+  .ov:hover{border-color:var(--green);transform:translateY(-2px);background:var(--base)}
+  .ov .num{font-family:var(--mono);font-size:12px;color:var(--overlay)}
+  .ov .t{font-size:13.5px;color:var(--text);line-height:1.3}
+  .ov .az{font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:.1em;text-transform:uppercase;display:block;margin-top:3px}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div id="brand"><b>Linux kernel</b> <span class="muted">contributor path</span> <span class="dot">●</span></div>
+<div id="act"></div>
+<div id="hint"><kbd>←</kbd> <kbd>→</kbd> move · <kbd>O</kbd> overview · <kbd>F</kbd> fit</div>
+<div id="counter"><b id="cnum">01</b> / <span id="ctot">00</span></div>
+
+<main id="deck">
+
+  <!-- 1 ─ Title -->
+  <section class="slide" data-title="Title" data-act="Intro">
+    <div class="wrap">
+      <p class="kick">From "I write kernel-adjacent code" to "I have patches in mainline"</p>
+      <h1>Contributing to the<br><span class="grad">Linux kernel</span>.</h1>
+      <p class="lede">If you can write systems code, the gap to upstream kernel work usually isn't the C — it's the
+        <b class="hl">culture and the machinery</b>: email patches, maintainer trees, the verifier of the social world.
+        This deck builds that machinery from first principles, then points at a forgiving first patch in a friendly
+        corner: <b class="hl">BPF and the networking stack</b>.</p>
+      <div style="margin-top:16px">
+        <span class="tag g">the tree topology</span><span class="tag g">the release cycle</span><span class="tag b">the dev loop</span>
+        <span class="tag b">patch anatomy</span><span class="tag k">the review gauntlet</span><span class="tag k">your first patch</span>
+      </div>
+      <p class="small muted" style="margin-top:18px">Five acts · ~21 stops · interactive: explore the trees, scrub a
+        release, decode a patch email, survive review, follow a patch to mainline.</p>
+    </div>
+  </section>
+
+  <!-- 2 ─ Not a PR button -->
+  <section class="slide" data-title="No PR button" data-act="I · The model">
+    <div class="wrap">
+      <p class="kick">The first thing to unlearn</p>
+      <h2>It's not a repo with a merge button — it's a federation of trees and people</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">There is no "fork &amp; open PR." The kernel runs on a model that predates and outlives GitHub,
+            and the sooner it clicks, the sooner everything else makes sense.</p>
+          <ul class="clean">
+            <li><b>Patches are emails.</b> You mail a diff, in plain text, to a mailing list and the right maintainers.
+              Review happens by reply.</li>
+            <li><b>Maintainers, not merges.</b> Each subsystem has a maintainer who curates a tree. They apply your
+              patch to <i>their</i> tree; it flows upward from there.</li>
+            <li><b>Trust is earned in public.</b> Your <code class="inl">Signed-off-by</code> is a legal-ish
+              certification (the DCO). Your track record is the sum of your accepted patches.</li>
+          </ul>
+          <p class="small muted">The upside: it's radically decentralized, scriptable, and durable. The cost: a workflow
+            you have to learn deliberately — which is the rest of this deck.</p>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node g">you — a patch in your local tree</div><div class="down">↓ git send-email</div>
+            <div class="node b">mailing list + maintainer (review)</div><div class="down">↓ applied</div>
+            <div class="node k">subsystem maintainer tree (e.g. bpf-next)</div><div class="down">↓ integration</div>
+            <div class="node y">linux-next (tested nightly)</div><div class="down">↓ merge window</div>
+            <div class="node p">Linus's mainline → release</div>
+          </div>
+          <p class="cap">No step here has a button. Every arrow is a person, a script, or a convention. We'll walk each.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 ─ Tree topology (INTERACTIVE) -->
+  <section class="slide" data-title="The tree topology" data-act="I · The model">
+    <div class="wrap">
+      <p class="kick">Where code actually lives</p>
+      <h2>Many trees, one direction of flow — upward to Linus</h2>
+      <p class="lede" style="max-width:82ch">"The kernel source" isn't one repo you push to. It's a fan-in of
+        <b class="hl">maintainer trees</b> that integrate in <b class="hl">linux-next</b> and merge into
+        <b class="hl">mainline</b>. Click each to see its job — and where <span style="color:var(--green)">you</span> fit.</p>
+
+      <div class="ix">
+        <div class="ixhead"><span class="pill">explore</span><h4>Click a tree</h4></div>
+        <div class="treerow" id="treeRow"></div>
+        <div class="tx-flow">your branch → list → maintainer tree → linux-next → mainline → stable</div>
+        <div class="tx-explain" id="treeExplain">Click any node above to learn what it is and how a patch moves through it.</div>
+      </div>
+      <p class="cap">The mental shortcut: <b>fixes</b> for the current release go to the <code class="inl">*/fixes</code>
+        or <code class="inl">net</code> tree; <b>features</b> for the next release go to the <code class="inl">*-next</code>
+        tree. Picking the wrong one is the most common rookie miss.</p>
+    </div>
+  </section>
+
+  <!-- 4 ─ Release cycle (INTERACTIVE scrubber) -->
+  <section class="slide" data-title="The release cycle" data-act="I · The model">
+    <div class="wrap">
+      <p class="kick">~9–10 weeks, on repeat, forever</p>
+      <h2>When your patch can land depends on where you are in the cycle</h2>
+      <p class="lede" style="max-width:84ch">The kernel ships on a metronome: a two-week <b class="hl">merge
+        window</b>, then weekly release candidates (<code class="inl">rc1…rc7</code>, sometimes <code class="inl">rc8</code>),
+        then a release — and the next window opens. Scrub it to see what's accepted when.</p>
+
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4>One release cycle</h4></div>
+        <input type="range" id="rcRange" min="0" max="4" value="0" step="1" style="width:100%;accent-color:var(--green)">
+        <div class="tlmarks" id="rcMarks"></div>
+        <div class="cols" style="margin-top:14px;gap:20px">
+          <div class="tlpanel" id="rcNext"></div>
+          <div class="tlpanel" id="rcFixes"></div>
+        </div>
+        <div class="tlverdict" id="rcVerdict"></div>
+      </div>
+      <p class="cap">For netdev specifically: <code class="inl">net-next</code> <b>closes</b> during the merge window —
+        feature submissions are turned away until it reopens after <code class="inl">rc1</code>. Knowing the date saves
+        you a bounced series.</p>
+    </div>
+  </section>
+
+  <!-- 5 ─ Get the source -->
+  <section class="slide" data-title="Get the source" data-act="II · Your machine">
+    <div class="wrap">
+      <p class="kick">Clone the right tree, not just "the kernel"</p>
+      <h2>Work against the subsystem tree you'll submit to</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Cloning Linus's mainline is fine for reading, but you develop against the
+            <b class="hl">maintainer tree</b> your patch will target — so you're building on what they'll actually
+            apply to.</p>
+          <ul class="clean">
+            <li><b>Good first targets:</b> <code class="inl">bpf-next</code> (BPF features) or
+              <code class="inl">net-next</code> (networking) — small, well-bounded, friendly to newcomers.</li>
+            <li>Add it as a remote alongside mainline; develop on a topic branch named for the change.</li>
+            <li>Rebase onto the latest <code class="inl">-next</code> before sending, so it applies cleanly.</li>
+          </ul>
+          <p class="small muted">The <code class="inl">MAINTAINERS</code> file lists every subsystem's tree URL,
+            lists, and maintainers — <code class="inl">scripts/get_maintainer.pl</code> reads it for you (slide 14).</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>set up trees</span></div><div data-sh><script type="text/plain"># mainline (Linus) — your baseline for reading
+git clone \
+  git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+cd linux
+
+# add the subsystem tree you'll target
+git remote add bpf-next \
+  git://git.kernel.org/pub/scm/linux/kernel/git/bpf/bpf-next.git
+git remote update bpf-next
+
+# develop on a topic branch off that tree
+git checkout -b my-feature bpf-next/master</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 ─ Configure & build -->
+  <section class="slide" data-title="Configure &amp; build" data-act="II · Your machine">
+    <div class="wrap">
+      <p class="kick">The config is half the battle</p>
+      <h2>Build a kernel shaped like the one you run</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A full <code class="inl">defconfig</code> builds thousands of modules you'll never load.
+            Start from your running kernel and trim — builds go from "make a coffee" to "make a sip."</p>
+          <ul class="clean">
+            <li><code class="inl">make localmodconfig</code> — keep only what's loaded right now. Massively smaller.</li>
+            <li><code class="inl">ccache</code> + <code class="inl">make -j$(nproc)</code> — cache and parallelize;
+              incremental rebuilds become seconds.</li>
+            <li>Turn on the debuggers you'll want: <code class="inl">KASAN</code>, <code class="inl">KCSAN</code>,
+              <code class="inl">lockdep</code>, <code class="inl">DEBUG_INFO_BTF</code> (for BPF CO-RE).</li>
+          </ul>
+          <p class="small muted">First build is slow; every build after is incremental. Optimize the <i>loop</i>, not
+            the first run.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>configure + build</span></div><div data-sh><script type="text/plain"># start from what THIS machine actually runs
+make localmodconfig
+
+# enable the safety nets for development
+./scripts/config -e KASAN -e LOCKDEP \
+                 -e DEBUG_INFO_BTF -e GDB_SCRIPTS
+
+# cached, parallel build
+export KBUILD_BUILD_TIMESTAMP=   # reproducible
+make -j"$(nproc)" CC="ccache gcc"
+# → arch/x86/boot/bzImage + modules</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 ─ The fast boot loop (INTERACTIVE pipeline) -->
+  <section class="slide" data-title="The fast boot loop" data-act="II · Your machine">
+    <div class="wrap">
+      <p class="kick">Iteration speed is the whole game</p>
+      <h2>Edit → build → boot in seconds, not minutes</h2>
+      <p class="lede" style="max-width:82ch">The single biggest productivity lever in kernel work is how fast you can
+        run a changed kernel. <b class="hl">Don't reboot real hardware.</b> Boot your freshly-built kernel in a VM
+        against your existing filesystem — <code class="inl">virtme-ng</code> makes it one command.</p>
+
+      <div class="ix">
+        <div class="ixhead"><span class="pill">live</span><h4>The inner loop with virtme-ng</h4></div>
+        <div class="pipe" id="pipe">
+          <div class="pstage" data-s="0"><div class="pz">edit</div><div class="pt">change code</div><div class="pd">a few lines in a .c file</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="1"><div class="pz">build</div><div class="pt">make -j</div><div class="pd">incremental · seconds with ccache</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="2"><div class="pz">boot</div><div class="pt">vng</div><div class="pd">QEMU + your FS, no image, &lt;5s</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="3"><div class="pz">test</div><div class="pt">run selftest</div><div class="pd">e.g. tools/testing/selftests/bpf</div></div>
+          <div class="pconn">→</div>
+          <div class="pstage" data-s="4"><div class="pz">read</div><div class="pt">dmesg / ftrace</div><div class="pd">printk, KASAN splats, traces</div></div>
+        </div>
+        <div class="controls">
+          <button class="btn primary" id="pipePlay">▶ Play loop</button>
+          <button class="btn" id="pipeStep">Step</button>
+          <button class="btn" id="pipeReset">Reset</button>
+          <span class="small muted" id="pipeNote" style="margin-left:6px"></span>
+        </div>
+      </div>
+      <p class="cap"><code class="inl">vng -b</code> builds, <code class="inl">vng</code> boots it instantly against
+        your real root. Keep a physical box only for what genuinely needs real hardware.</p>
+    </div>
+  </section>
+
+  <!-- 8 ─ Debug & instrument -->
+  <section class="slide" data-title="Debug &amp; instrument" data-act="II · Your machine">
+    <div class="wrap">
+      <p class="kick">You can't attach a debugger to a panic — so instrument</p>
+      <h2>The kernel's own toolbox, from printk to sanitizers</h2>
+      <div class="grid2">
+        <div class="card"><h4><code class="inl">printk</code> / dynamic debug</h4><p>The workhorse. <code class="inl">pr_info()</code>,
+          and <code class="inl">pr_debug()</code> you can flip on per-file/line at runtime via
+          <code class="inl">/sys/kernel/debug/dynamic_debug</code>.</p></div>
+        <div class="card"><h4>ftrace / trace events</h4><p>Function and event tracing with near-zero overhead.
+          <code class="inl">trace-cmd</code> and the <code class="inl">tracefs</code> interface — see what the kernel
+          is doing without recompiling.</p></div>
+        <div class="card"><h4>KASAN / KCSAN / UBSAN</h4><p>Compile-in sanitizers that catch use-after-free, data races,
+          and undefined behavior with a precise splat. The cheapest bug you'll ever fix is the one KASAN finds.</p></div>
+        <div class="card"><h4>lockdep</h4><p>Runtime lock-ordering validator. Turn it on and it screams the moment your
+          change introduces a deadlock-shaped pattern — before it ever deadlocks.</p></div>
+        <div class="card"><h4>gdb + QEMU</h4><p>Boot under QEMU with <code class="inl">-s</code> and attach gdb with the
+          kernel's <code class="inl">vmlinux-gdb.py</code> scripts for real source-level stepping.</p></div>
+        <div class="card"><h4>The test robots</h4><p>The <b>kernel test robot</b> (Intel LKP) and <b>syzbot</b> will
+          build, boot, and fuzz your tree — and email you regressions. Free CI you don't run.</p></div>
+      </div>
+      <p class="cap">Rule of thumb: reproduce in a VM with sanitizers on, narrow with ftrace, confirm with a printk.
+        A clean KASAN run is worth a paragraph of "looks correct to me."</p>
+    </div>
+  </section>
+
+  <!-- 9 ─ Patch anatomy (INTERACTIVE decoder) -->
+  <section class="slide" data-title="Anatomy of a patch" data-act="III · The patch">
+    <div class="wrap">
+      <p class="kick">A patch is a very particular email</p>
+      <h2>Every line is load-bearing — click to decode</h2>
+      <p class="lede" style="max-width:80ch">This is what you actually send. The format isn't bureaucracy: maintainers
+        apply hundreds of these with tooling, so structure is the interface. Click any region.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">explore</span><h4>[PATCH bpf-next v2 2/3]</h4></div>
+        <div class="pmail" id="pmail"></div>
+        <div class="pm-explain" id="pmExplain">Click a line above to learn what it does and why it's there.</div>
+      </div>
+      <p class="cap">The single most-missed detail: the changelog goes <b>below the first <code class="inl">---</code></b>
+        (the "scissors") so it documents the review for humans but never enters the permanent git history.</p>
+    </div>
+  </section>
+
+  <!-- 10 ─ One logical change -->
+  <section class="slide" data-title="One logical change" data-act="III · The patch">
+    <div class="wrap">
+      <p class="kick">The cardinal rule of patch craft</p>
+      <h2>One patch does one reviewable thing</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A patch that does three things is three times as hard to review and impossible to revert
+            cleanly. Split work into a <b class="hl">series</b> where each patch stands on its own and builds.</p>
+          <ul class="clean">
+            <li><b>Each patch compiles &amp; passes tests</b> on its own — bisection must never land on a broken commit.</li>
+            <li><b>Refactor, then change.</b> A "move code" patch and a "change behavior" patch are separate, so the
+              reviewer sees the real diff, not noise.</li>
+            <li><b>A cover letter</b> (<code class="inl">[PATCH 0/N]</code>) explains the series as a whole; each patch
+              explains itself.</li>
+          </ul>
+          <p class="small muted">"Why," not "what." The diff shows what changed; the commit message must explain the
+            reasoning a reviewer can't infer.</p>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node p">❌ one patch: refactor + new feature + fix a typo</div><div class="down">split into</div>
+            <div class="node g">1/3 — refactor (no behavior change)</div><div class="down"></div>
+            <div class="node g">2/3 — add the feature on top</div><div class="down"></div>
+            <div class="node g">3/3 — add the selftest</div>
+          </div>
+          <p class="cap">Reviewers reward a clean series with fast review. A 600-line do-everything patch sits unread.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11 ─ Mechanical gates -->
+  <section class="slide" data-title="The mechanical gates" data-act="III · The patch">
+    <div class="wrap">
+      <p class="kick">Pass these before a human ever looks</p>
+      <h2>The checks that are non-negotiable and automatable</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">A class of feedback you can avoid entirely by running the tools first. Maintainers have zero
+            patience for issues a script would have caught.</p>
+          <ul class="clean">
+            <li><code class="inl">checkpatch.pl --strict</code> — coding style, common mistakes. Clean it before
+              sending.</li>
+            <li><code class="inl">get_maintainer.pl</code> — the <i>exact</i> people and lists to address. Don't guess.</li>
+            <li><b>Clean build</b> with <code class="inl">W=1</code>, and <code class="inl">sparse</code>
+              (<code class="inl">make C=1</code>) for the subtle type bugs.</li>
+            <li><b>Run the relevant selftests</b> — and add one for your change.</li>
+          </ul>
+          <p class="small muted">CI bots (kernel test robot, BPF CI) run more — but failing the basics in public is an
+            avoidable bad first impression.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>pre-flight</span></div><div data-sh><script type="text/plain"># style + common-error lint on your commit
+scripts/checkpatch.pl --strict --git HEAD
+
+# exactly who to send to (reads MAINTAINERS)
+git format-patch -1
+scripts/get_maintainer.pl 0001-*.patch
+
+# build clean, with extra warnings + sparse
+make -j"$(nproc)" W=1 C=1
+
+# run (and add) the selftest
+make -C tools/testing/selftests/bpf
+sudo ./tools/testing/selftests/bpf/test_progs -t foo</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 12 ─ b4 + send-email -->
+  <section class="slide" data-title="Sending the patch" data-act="III · The patch">
+    <div class="wrap">
+      <p class="kick">git send-email, minus the footguns</p>
+      <h2>Use <code class="inl">b4</code> — it modernizes the whole flow</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">The mechanics that trip everyone up — threading, versioning, To/Cc from MAINTAINERS, trailers
+            collected from replies — are exactly what <b class="hl"><code class="inl">b4</code></b> automates.</p>
+          <ul class="clean">
+            <li><code class="inl">b4 prep</code> starts a tracked series off a base; <code class="inl">b4 send</code>
+              builds and mails it, correctly threaded.</li>
+            <li><code class="inl">b4 trailers -u</code> pulls reviewers' <code class="inl">Reviewed-by</code> tags back
+              into your commits for v2.</li>
+            <li>Send a test patch <b>to yourself</b> first. Confirm it applies with <code class="inl">git am</code>.</li>
+          </ul>
+          <p class="small muted">Hard rules: plain text only, no HTML mail, no line-wrapping the diff. A mangled patch
+            is dead on arrival.</p>
+        </div>
+        <div class="code"><div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>the modern path</span></div><div data-sh><script type="text/plain"># start a tracked series off the subsystem tree
+b4 prep -n my-feature -b bpf-next/master
+# ...write commits...
+
+b4 prep --check          # checkpatch, DCO, base checks
+b4 send                  # threaded, To/Cc filled, sent
+
+# --- classic equivalent ---
+git format-patch -v2 --cover-letter \
+    -o out/ bpf-next/master..
+git send-email --to=bpf@vger.kernel.org \
+    --cc-cmd='scripts/get_maintainer.pl' out/*.patch</script></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13 ─ Review gauntlet (INTERACTIVE stepper) -->
+  <section class="slide" data-title="The review gauntlet" data-act="III · The patch">
+    <div class="wrap">
+      <p class="kick">What gets a patch flamed — and how to dodge it</p>
+      <h2>Toggle the mistakes, then run review</h2>
+      <p class="lede" style="max-width:82ch">Maintainer review is the social verifier. Toggle on the classic
+        rookie mistakes below and run the gauntlet to see the reply each earns — then turn them all off for the clean
+        path.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4>maintainer review of your series</h4></div>
+        <div class="gtoggles" id="gToggles"></div>
+        <div class="vfsteps" id="gSteps"></div>
+        <div class="vfstate" id="gState"></div>
+        <div class="controls">
+          <button class="btn primary" id="gRun">Run review ▸</button>
+          <button class="btn" id="gReset">Reset</button>
+        </div>
+      </div>
+      <p class="cap">None of these are about intelligence — they're about <i>doing the reading first</i>. A clean
+        submission gets a <code class="inl">Reviewed-by</code>; a sloppy one gets a lecture and a closed thread.</p>
+    </div>
+  </section>
+
+  <!-- 14 ─ Send it: to whom / how -->
+  <section class="slide" data-title="To whom, and which tree" data-act="IV · Landing it">
+    <div class="wrap">
+      <p class="kick">Address it right or it bounces</p>
+      <h2>The right list, the right tree, the right moment</h2>
+      <div class="cols">
+        <div>
+          <p class="lede"><code class="inl">get_maintainer.pl</code> tells you the people; you still choose the
+            <b class="hl">tree</b> and the <b class="hl">timing</b>. For networking this is sharp:</p>
+          <ul class="clean">
+            <li><code class="inl">[PATCH net]</code> — a <b>fix</b> for the current release. Goes to the
+              <code class="inl">net</code> tree, accepted throughout the cycle.</li>
+            <li><code class="inl">[PATCH net-next]</code> — a <b>feature</b> for the next release. Goes to
+              <code class="inl">net-next</code> — <b>closed during the merge window</b>.</li>
+            <li>Put the target in the subject prefix so the maintainer (and patchwork) routes it correctly.</li>
+          </ul>
+          <p class="small muted">BPF mirrors this: <code class="inl">bpf</code> (fixes) vs <code class="inl">bpf-next</code>
+            (features), list <code class="inl">bpf@vger.kernel.org</code>, tracked in its own patchwork.</p>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node g">Cc the maintainers from get_maintainer.pl</div><div class="down">+</div>
+            <div class="node b">To: the subsystem list (bpf@ / netdev@)</div><div class="down">+</div>
+            <div class="node y">Subject prefix names the tree: [PATCH bpf-next]</div><div class="down">+</div>
+            <div class="node p">timed for when that tree is open</div><div class="down">=</div>
+            <div class="node">routed, tracked, reviewable</div>
+          </div>
+          <p class="cap">Always Cc the lists and people, never BCC. The public archive (lore) is the system of record.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 15 ─ Iterate -->
+  <section class="slide" data-title="Review &amp; iterate" data-act="IV · Landing it">
+    <div class="wrap">
+      <p class="kick">v1 is the start of the conversation, not the end</p>
+      <h2>Respond, revise, resend — and don't take it personally</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Almost nothing lands at v1. Review is terse, sometimes blunt, occasionally silent. The skill
+            that separates contributors from quitters is <b class="hl">persistence with grace</b>.</p>
+          <ul class="clean">
+            <li><b>Reply inline</b>, point by point. Agree and fix, or explain why not — politely, with reasoning.</li>
+            <li><b>Send a v2</b> as a new thread, with a changelog under the <code class="inl">---</code> and a link to
+              v1 on lore.</li>
+            <li><b>Collect trailers:</b> <code class="inl">Reviewed-by</code>, <code class="inl">Acked-by</code>,
+              <code class="inl">Tested-by</code> carry forward into each version.</li>
+            <li><b>Silence ≠ no.</b> A polite ping after ~1–2 weeks is expected, not rude.</li>
+          </ul>
+        </div>
+        <div>
+          <div class="card" style="margin-bottom:10px"><h4>Trailers you'll see &amp; earn</h4><p>
+            <code class="inl">Signed-off-by</code> (you, required) · <code class="inl">Reviewed-by</code> /
+            <code class="inl">Acked-by</code> (from reviewers/maintainers) · <code class="inl">Tested-by</code> ·
+            <code class="inl">Fixes:</code> (the commit you fix) · <code class="inl">Reported-by</code>.</p></div>
+          <div class="card"><h4>Bluntness is not hostility</h4><p>The culture optimizes for the code, in public, at
+            scale. "This is wrong because X" is about the patch, not you. Fix X, resend, move on — and your standing
+            compounds with every accepted patch.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 16 ─ Patch journey (INTERACTIVE player) -->
+  <section class="slide" data-title="Follow your patch" data-act="IV · Landing it">
+    <div class="wrap">
+      <p class="kick">From your terminal to a tagged release</p>
+      <h2>The whole journey, one patch</h2>
+      <p class="lede" style="max-width:82ch">Everything assembled: a single selftest patch, from
+        <code class="inl">git send-email</code> to shipping in a numbered kernel. Step through where it lives at each
+        stage — the topology and the cycle, in motion.</p>
+      <div class="ix">
+        <div class="ixhead"><span class="pill">drive it</span><h4>selftests/bpf: add a test for foo()</h4></div>
+        <div class="e2e" id="e2e"></div>
+        <div class="e2epay" id="e2ePay"></div>
+        <div class="controls">
+          <button class="btn primary" id="e2ePlay">▶ Play</button>
+          <button class="btn" id="e2eStep">Step</button>
+          <button class="btn" id="e2eReset">Reset</button>
+          <span class="small muted" id="e2eNote" style="margin-left:6px"></span>
+        </div>
+      </div>
+      <p class="cap">Median time from send to mainline for a clean patch: a few weeks to a couple of months, gated by
+        the cycle. Your name is now in the git log of every Linux machine on earth.</p>
+    </div>
+  </section>
+
+  <!-- 17 ─ syzbot & first patches -->
+  <section class="slide" data-title="Where first patches come from" data-act="IV · Landing it">
+    <div class="wrap">
+      <p class="kick">You don't have to invent a feature</p>
+      <h2>The best first patches are real bugs someone already found</h2>
+      <div class="grid2">
+        <div class="card"><h4>syzbot <span class="loc">real bugs</span></h4><p>A continuous fuzzer that files
+          kernel bugs <i>with C reproducers</i>. Pick an open one in BPF/net, reproduce it in your VM, fix it. High
+          credibility — it's a real bug, not a cosmetic cleanup.</p></div>
+        <div class="card"><h4>BPF selftests <span class="loc">friendly start</span></h4><p>Gaps in
+          <code class="inl">tools/testing/selftests/bpf</code> are valued and low-risk — and if you know what a BPF
+          program should do, you can tell what a test should assert. A gentle on-ramp.</p></div>
+        <div class="card"><h4>Documentation &amp; comments</h4><p>Wrong or missing kernel docs are real patches that
+          teach you the workflow on low stakes. A correct doc fix is a real contribution.</p></div>
+        <div class="card"><h4>The kernel test robot</h4><p>It reports build/regression failures publicly. Fixing one
+          is a self-contained, well-specified task with a built-in reproducer.</p></div>
+        <div class="card"><h4>Coccinelle / treewide</h4><p>Semantic-patch cleanups (e.g. converting a deprecated API)
+          across a subsystem — mechanical, reviewable, and they teach you the codebase's patterns.</p></div>
+        <div class="card"><h4>Your own itch <span class="loc">eventually</span></h4><p>A feature a tool you use actually
+          needs — like NetWatch's eBPF Phase-2 hooks (Act V). Scratching a real need is the most durable motivation.</p></div>
+      </div>
+      <p class="cap">Start where the bug is already proven and the scope is bounded. Your first patch should be
+        <i>small and correct</i>, not clever.</p>
+    </div>
+  </section>
+
+  <!-- 18 ─ Where to start -->
+  <section class="slide" data-title="Where to start" data-act="V · Your path">
+    <div class="wrap">
+      <p class="kick">Skip the staging-janitor route — go where you have context</p>
+      <h2>Your fastest on-ramp is a subsystem you already understand</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">Most "first patch" advice points at <code class="inl">drivers/staging</code> cleanups. You can
+            usually do better: start <b class="hl">where your existing knowledge is leverage</b>. If you've touched eBPF
+            or the network stack, that corner is unusually welcoming:</p>
+          <ul class="clean">
+            <li><b>BPF selftests</b> — <code class="inl">tools/testing/selftests/bpf</code>, tree
+              <code class="inl">bpf-next</code>, list <code class="inl">bpf@vger.kernel.org</code>. Add/fix a test:
+              valued, low-risk, and the intent is clear.</li>
+            <li><b>Networking</b> — tree <code class="inl">net-next</code>, list <code class="inl">netdev@vger.kernel.org</code>.
+              TCP/connect/socket-state knowledge maps straight onto <code class="inl">net/ipv4/…</code>.</li>
+            <li><b>A syzbot bug</b> in BPF/net — a real, reproducible bug is the highest-credibility first patch.</li>
+          </ul>
+        </div>
+        <div>
+          <div class="card" style="margin-bottom:10px"><h4>The first-patch loop</h4><p>1 · lurk the list for a couple
+            weeks &nbsp; 2 · pick a selftest gap or open syzbot bug &nbsp; 3 · fix in a virtme-ng VM &nbsp; 4 · checkpatch +
+            get_maintainer &nbsp; 5 · <code class="inl">b4 send</code> &nbsp; 6 · iterate to v2/v3.</p></div>
+          <div class="card"><h4>Two paths, shared start</h4><p><b>Craft / IC signal</b> → stick with one subsystem,
+            build a maintainer relationship. <b>Deepen a tool you maintain</b> → read for fluency, patches are a
+            byproduct. The first month is identical either way.</p></div>
+        </div>
+      </div>
+      <p class="cap">Start small and correct, not clever — and let the list teach you the norms before you post.</p>
+    </div>
+  </section>
+
+  <!-- 19 ─ a real project is the on-ramp -->
+  <section class="slide" data-title="A real project is the on-ramp" data-act="V · Your path">
+    <div class="wrap">
+      <p class="kick">A feature you need is a kernel-onboarding project</p>
+      <h2>The hooks a real tool needs pull you into the source</h2>
+      <div class="cols">
+        <div>
+          <p class="lede">You don't need a contrived starter task — a real tool will hand you one. Take NetWatch as a
+            worked example: its eBPF Phase 2 wants broader attribution, and every hook it adds means reading the exact
+            kernel networking source a netdev contributor reads.</p>
+          <ul class="clean">
+            <li><code class="inl">tcp_v6_connect</code> — IPv6 attribution, the natural sibling of the Phase-1 kprobe.</li>
+            <li><b>the UDP send path</b> — so QUIC (which NetWatch already decrypts) gets per-process attribution.</li>
+            <li><code class="inl">inet_sock_set_state</code> — catch short-lived flows the connect-entry probe misses.</li>
+          </ul>
+          <p class="small muted">Each is the same question this deck answered for patches, asked of the kernel: which
+            hook sees the event, what's populated when it fires, what's the stable key.</p>
+        </div>
+        <div>
+          <div class="flowv">
+            <div class="node b">a NetWatch attribution gap</div><div class="down">↓ leads you to</div>
+            <div class="node y">read net/ipv4, net/ipv6, the socket lifecycle</div><div class="down">↓ surfaces</div>
+            <div class="node p">a missing tracepoint · a selftest gap · a doc error</div><div class="down">↓ becomes</div>
+            <div class="node g">your first upstream patch</div>
+          </div>
+          <p class="cap">The #38 timing bug from the eBPF deep-dive is exactly this kind of question. Answer enough of
+            them and you’re a kernel contributor — without ever forcing it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 20 ─ Resources -->
+  <section class="slide" data-title="Keep-up &amp; resources" data-act="V · Your path">
+    <div class="wrap">
+      <p class="kick">Read the kernel’s conversation before you join it</p>
+      <h2>The handful of sources that actually matter</h2>
+      <div class="grid2">
+        <div class="card"><h4>LWN.net <span class="loc">subscribe</span></h4><p>The single best source for what’s
+          happening in the kernel and <i>why</i>. Not optional if you’re serious. Weekly edition + deep technical
+          articles.</p></div>
+        <div class="card"><h4>lore.kernel.org</h4><p>The mailing-list archive and system of record. Read netdev/bpf for
+          a few weeks to absorb the norms before posting. Every patch and reply, forever.</p></div>
+        <div class="card"><h4>docs.kernel.org</h4><p>The in-tree docs are canonical: <code class="inl">process/submitting-patches</code>,
+          <code class="inl">coding-style</code>, <code class="inl">submit-checklist</code>. Read these once, properly.</p></div>
+        <div class="card"><h4>kernelnewbies.org</h4><p>The "first patch" tutorial and FAQ — the gentlest on-ramp to the
+          mechanics, aimed exactly at where you are now.</p></div>
+        <div class="card"><h4>LFX Mentorship</h4><p>The Linux Kernel Mentorship Program — structured, mentored cohorts
+          with a maintainer’s attention. Worth it for a guided ramp.</p></div>
+        <div class="card"><h4>One book, for the model</h4><p>Robert Love, <i>Linux Kernel Development</i> — dated
+          (pre-6.x) but the cleanest mental model of scheduler/memory/locking. Read for the model; LWN for what’s
+          current.</p></div>
+      </div>
+      <p class="cap">Tools to install today: <code class="inl">b4</code>, <code class="inl">virtme-ng</code>,
+        <code class="inl">ccache</code>, and a working <code class="inl">git send-email</code> against your mail.</p>
+    </div>
+  </section>
+
+  <!-- 21 ─ Recap -->
+  <section class="slide" data-title="What you just toured" data-act="Recap">
+    <div class="wrap">
+      <p class="kick">The whole map, once more</p>
+      <h2>From "no PR button" to a patch in mainline</h2>
+      <div class="grid2">
+        <div class="card"><h4>The model <span class="loc">Act I</span></h4><p>A federation of maintainer trees flowing
+          upward through linux-next to Linus, on a ~9–10 week metronome. Features to <code class="inl">-next</code>,
+          fixes to the release.</p></div>
+        <div class="card"><h4>Your machine <span class="loc">Act II</span></h4><p>The right tree, a trimmed config, and
+          a sub-5-second edit→build→boot loop with virtme-ng. Sanitizers on; instrument, don’t guess.</p></div>
+        <div class="card"><h4>The patch <span class="loc">Act III</span></h4><p>One logical change, a precise email,
+          the mechanical gates, <code class="inl">b4 send</code> — and surviving the review gauntlet by doing the
+          reading first.</p></div>
+        <div class="card"><h4>Landing it <span class="loc">Act IV</span></h4><p>Right list, right tree, right moment;
+          iterate to v2/v3 with grace; follow it through -next and the merge window to a tagged release.</p></div>
+        <div class="card"><h4>Your path <span class="loc">Act V</span></h4><p>BPF selftests and netdev — a welcoming
+          corner. A real tool's feature gap (like NetWatch's Phase-2 hooks) is a real on-ramp, not a contrived exercise.</p></div>
+        <div class="card"><h4>Next step</h4><p>Install <code class="inl">b4</code> + <code class="inl">virtme-ng</code>,
+          lurk <code class="inl">bpf@vger</code> for a couple of weeks, then pick a selftest gap or an open syzbot bug.</p></div>
+      </div>
+      <p class="cap" style="margin-top:14px">Press <kbd>O</kbd> for the full map · <kbd>←</kbd> to revisit any
+        simulation. The C was never the hard part — now the machinery isn’t either.</p>
+    </div>
+  </section>
+
+</main>
+
+<div id="overview"><h3>Jump to a stop — <span class="muted">click any, or press O to close</span></h3><div class="ovgrid" id="ovgrid"></div></div>
+
+<script>
+/* ── safe single-pass shell/git highlighter (escapes as it goes) ─────────── */
+(function(){
+  var CMD={git:1,make:1,cd:1,sudo:1,b4:1,vng:1,scp:1,ssh:1,cat:1,export:1,clang:1,gcc:1,
+    cargo:1,bpftool:1,'trace-cmd':1,dmesg:1,checkpatch:1,nproc:1,scripts:1};
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function span(c,s){return '<span class="'+c+'">'+esc(s)+'</span>';}
+  var idc=/[A-Za-z0-9_\-\.\/]/;
+  function hl(src){
+    var out='',i=0,n=src.length,bol=true;
+    while(i<n){
+      var c=src[i];
+      if(c==='\n'){out+='\n';i++;bol=true;continue;}
+      if(c==='#'){ var j=src.indexOf('\n',i); if(j<0)j=n; out+=span('cmt',src.slice(i,j)); i=j; continue; }
+      if(c==='"'||c==="'"){ var q=c,j2=i+1; while(j2<n&&src[j2]!==q&&src[j2]!=='\n'){ if(src[j2]==='\\')j2++; j2++; } if(src[j2]===q)j2++; out+=span('str',src.slice(i,j2)); i=j2; continue; }
+      if(c==='-'&&/[A-Za-z\-]/.test(src[i+1]||'')){ var j3=i+1; while(j3<n&&/[A-Za-z0-9\-_]/.test(src[j3]))j3++; out+=span('flag',src.slice(i,j3)); i=j3; bol=false; continue; }
+      if(/[A-Za-z]/.test(c)){ var j4=i+1; while(j4<n&&idc.test(src[j4]))j4++; var w=src.slice(i,j4);
+        var first=w.split(/[\/\.]/)[0];
+        out+= (bol&&CMD[first])||CMD[w] ? span('cmd',w) : esc(w); i=j4; bol=false; continue; }
+      if(/[0-9]/.test(c)){ var j5=i+1; while(j5<n&&/[0-9a-fA-Fx]/.test(src[j5]))j5++; out+=span('num',src.slice(i,j5)); i=j5; bol=false; continue; }
+      if(c!==' '&&c!=='\t')bol=false;
+      out+=esc(c); i++;
+    }
+    return out;
+  }
+  document.querySelectorAll('[data-sh] script[type="text/plain"]').forEach(function(s){
+    var pre=document.createElement('pre'),code=document.createElement('code');
+    code.innerHTML=hl(s.textContent); pre.appendChild(code); s.parentNode.replaceChild(pre,s);
+  });
+})();
+
+/* ── deck engine ─────────────────────────────────────────────────────────── */
+var slides=[].slice.call(document.querySelectorAll('.slide'));
+var cur=0;
+var elProg=document.getElementById('progress'),elNum=document.getElementById('cnum'),
+    elTot=document.getElementById('ctot'),elAct=document.getElementById('act');
+elTot.textContent=String(slides.length).padStart(2,'0');
+function fit(slide){ var w=slide.querySelector('.wrap'); if(!w)return;
+  w.style.transform='translate(-50%,-50%) scale(1)';
+  var pad=54, vh=window.innerHeight-pad*2, vw=window.innerWidth-pad*2;
+  var r=w.getBoundingClientRect(); var s=Math.min(1, vw/r.width, vh/r.height);
+  w.style.transform='translate(-50%,-50%) scale('+s+')'; }
+function fitActive(){ fit(slides[cur]); }
+function go(i){ i=Math.max(0,Math.min(slides.length-1,i));
+  if(i===cur && slides[cur].classList.contains('active')){fit(slides[cur]);return;}
+  slides[cur].classList.remove('active'); cur=i; slides[cur].classList.add('active'); slides[cur].scrollTop=0;
+  elProg.style.width=((cur)/(slides.length-1)*100)+'%';
+  elNum.textContent=String(cur+1).padStart(2,'0');
+  elAct.textContent=slides[cur].getAttribute('data-act')||'';
+  location.hash=String(cur+1);
+  requestAnimationFrame(fitActive); requestAnimationFrame(function(){requestAnimationFrame(fitActive);});
+  onEnter(cur); }
+window.addEventListener('keydown',function(e){
+  if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){go(cur+1);e.preventDefault();}
+  else if(e.key==='ArrowLeft'||e.key==='PageUp'){go(cur-1);e.preventDefault();}
+  else if(e.key==='Home'){go(0);}else if(e.key==='End'){go(slides.length-1);}
+  else if(e.key==='o'||e.key==='O'){toggleOverview();}
+  else if(e.key==='f'||e.key==='F'){fitActive();}
+  else if(e.key==='Escape'){document.getElementById('overview').classList.remove('open');}
+});
+window.addEventListener('resize',fitActive);
+var ov=document.getElementById('overview'),ovg=document.getElementById('ovgrid');
+slides.forEach(function(s,i){ var d=document.createElement('div');d.className='ov';
+  d.innerHTML='<span class="num">'+String(i+1).padStart(2,'0')+'</span><span class="t">'+
+    (s.getAttribute('data-title')||'')+'<span class="az">'+(s.getAttribute('data-act')||'')+'</span></span>';
+  d.onclick=function(){go(i);toggleOverview();}; ovg.appendChild(d); });
+function toggleOverview(){ov.classList.toggle('open');}
+
+function onEnter(i){
+  var t=slides[i].getAttribute('data-title');
+  if(t==='The fast boot loop') pipeReset();
+  else if(t==='The release cycle') rcReset();
+  else if(t==='The review gauntlet') gReset();
+  else if(t==='Follow your patch') e2eReset();
+}
+
+/* ── tree topology (slide 3) ─────────────────────────────────────────────── */
+var TREES=[
+  {n:'your branch', s:'local', ex:'<b class="you">Where you work.</b> A topic branch off the subsystem tree, one logical change per branch/series. You never push here — you <b>email</b> patches out of it with git send-email.'},
+  {n:'mailing list', s:'+ patchwork', ex:'<b>The public square.</b> Your patch is mailed to a list (e.g. bpf@vger.kernel.org) and tracked in <b>patchwork</b>. Review happens as plain-text replies. Nothing is private; nothing is lost.'},
+  {n:'maintainer tree', s:'bpf-next / net-next', ex:'<b>The gatekeeper\'s tree.</b> A maintainer reviews and, if happy, <b>applies your patch to their tree</b> — the first time it lands anywhere official. Features go to <code>*-next</code>; fixes go to the non-next tree.'},
+  {n:'linux-next', s:'nightly integration', ex:'<b>The proving ground.</b> Stephen Rothwell assembles every maintainer tree into <b>linux-next</b> each day. It\'s built and tested by bots and humans. If your patch breaks something, this is where it surfaces — before Linus ever sees it.'},
+  {n:'mainline', s:"Linus's tree", ex:'<b>The trunk.</b> During the 2-week <b>merge window</b>, Linus pulls maintainer trees (the stuff that baked in linux-next) into mainline. Your patch is now in an <code>-rc</code> kernel.'},
+  {n:'stable', s:'6.x.y', ex:'<b>The backport stream.</b> Greg KH and co. backport important fixes to released kernels. Tag a fix <code>Cc: stable@vger.kernel.org</code> (with a <code>Fixes:</code> line) and it can flow here automatically.'}
+];
+var elTreeRow=document.getElementById('treeRow'), elTreeEx=document.getElementById('treeExplain'), treeSel=-1;
+TREES.forEach(function(t,k){ var d=document.createElement('div'); d.className='tnode'; d.setAttribute('data-k',k);
+  d.innerHTML='<div class="tt">'+t.n+'</div><div class="ts">'+t.s+'</div>';
+  d.onclick=function(){ treeSel=k; [].forEach.call(elTreeRow.children,function(c,j){c.classList.toggle('sel',j===k);});
+    elTreeEx.innerHTML=t.ex; }; elTreeRow.appendChild(d); });
+
+/* ── release-cycle scrubber (slide 4) ────────────────────────────────────── */
+var RC=[
+  {m:'merge window<br>(weeks 1–2)', win:1,
+   next:[['*-next submissions','closed','no'],['merges to mainline','YES','ok'],['new features','too late for this rel','no']],
+   fixes:[['bug fixes','accepted','ok'],['net (fixes) tree','open','ok']],
+   v:{cls:'win',t:'⚑ Merge window: Linus pulls the <code>-next</code> trees that baked in linux-next. net-next/bpf-next are CLOSED to new features — submit one now and it bounces. Only fixes move.'}},
+  {m:'rc1<br>(week 3)', win:0,
+   next:[['*-next reopens','YES','ok'],['feature work','accepted again','ok']],
+   fixes:[['regression fixes','high priority','ok'],['net tree','open','ok']],
+   v:{cls:'rc',t:'rc1 is out; the merge window closed. The <code>-next</code> trees reopen — this is the moment to send feature series for the NEXT release. Mainline now takes only fixes.'}},
+  {m:'rc2–rc5<br>(weeks 4–7)', win:0,
+   next:[['feature series','queue in -next','ok'],['lands in','next release','na']],
+   fixes:[['fixes for THIS rel','keep flowing','ok'],['Cc: stable','for backport','ok']],
+   v:{cls:'rc',t:'Steady state. Your feature patches accumulate and get tested in linux-next, targeting the next release. Fixes for the in-progress release go straight up.'}},
+  {m:'rc6–rc7<br>(weeks 8–9)', win:0,
+   next:[['features','still queue in -next','ok'],['risk appetite','low','na']],
+   fixes:[['only safe fixes','accepted','ok'],['big changes','wait for window','no']],
+   v:{cls:'rc',t:'Late cycle. Maintainers get conservative — only clear, safe fixes. Anything risky waits for the next merge window. Patience is a feature here.'}},
+  {m:'release →<br>window opens', win:1,
+   next:[['the -next backlog','flushes to mainline','ok'],['your queued series','its moment','ok']],
+   fixes:[['new cycle','begins','na']],
+   v:{cls:'win',t:'Release day. Linus tags it; the next merge window opens immediately. Everything that baked in linux-next — including your series — now flows into mainline. The metronome ticks again.'}}
+];
+var elRcRange=document.getElementById('rcRange'),elRcMarks=document.getElementById('rcMarks'),
+    elRcNext=document.getElementById('rcNext'),elRcFixes=document.getElementById('rcFixes'),elRcVerdict=document.getElementById('rcVerdict');
+function rcPanel(title,rows){ var h='<h5>'+title+'</h5>'; rows.forEach(function(r){
+  h+='<div class="row"><span>'+r[0]+'</span><span class="v '+r[2]+'">'+r[1]+'</span></div>'; }); return h; }
+function rcRender(){ var p=+elRcRange.value,s=RC[p];
+  var mk='';RC.forEach(function(d,k){mk+='<div class="tm'+(k===p?' on':'')+(d.win?' win':'')+'">'+d.m+'</div>';});
+  elRcMarks.innerHTML=mk;
+  elRcNext.innerHTML=rcPanel('-next trees (features)',s.next);
+  elRcFixes.innerHTML=rcPanel('fixes / stable',s.fixes);
+  elRcVerdict.className='tlverdict '+s.v.cls; elRcVerdict.innerHTML=s.v.t; }
+elRcRange.oninput=rcRender; function rcReset(){elRcRange.value=0;rcRender();} rcRender();
+
+/* ── build-loop pipeline (slide 7) ───────────────────────────────────────── */
+var pstages=[].slice.call(document.querySelectorAll('#pipe .pstage'));
+var pNotes=['Change a few lines — a new selftest, a fix, a printk.',
+  'make -j rebuilds only what changed; with ccache it’s seconds.',
+  'vng boots the new kernel in QEMU against your real filesystem — under 5 seconds, no image to manage.',
+  'Run the relevant selftest (e.g. tools/testing/selftests/bpf) right inside the VM.',
+  'Read dmesg / ftrace for results, KASAN splats, your printks — then loop. ↻'];
+var pIdx=-1,pTimer=null;
+function pipePaint(){pstages.forEach(function(s,k){s.classList.toggle('lit',k<=pIdx);});
+  document.getElementById('pipeNote').textContent=pIdx>=0?pNotes[pIdx]:'';}
+function pipeStep(){if(pIdx<pstages.length-1){pIdx++;pipePaint();}return pIdx<pstages.length-1;}
+function pipeReset(){if(pTimer){clearInterval(pTimer);pTimer=null;}pIdx=-1;pipePaint();
+  var b=document.getElementById('pipePlay');if(b)b.textContent='▶ Play loop';}
+function pipePlay(){var b=document.getElementById('pipePlay');
+  if(pTimer){clearInterval(pTimer);pTimer=null;b.textContent='▶ Play loop';return;}
+  if(pIdx>=pstages.length-1)pipeReset(); b.textContent='❚❚ Pause';
+  pTimer=setInterval(function(){if(!pipeStep()){clearInterval(pTimer);pTimer=null;b.textContent='↻ Replay';}},820);}
+document.getElementById('pipePlay').onclick=pipePlay;
+document.getElementById('pipeStep').onclick=function(){if(pTimer){clearInterval(pTimer);pTimer=null;document.getElementById('pipePlay').textContent='▶ Play loop';}pipeStep();};
+document.getElementById('pipeReset').onclick=pipeReset;
+
+/* ── patch-email decoder (slide 9) ───────────────────────────────────────── */
+var PM=[
+  ['From: You <you@example.com>','addr'],
+  ['To: bpf@vger.kernel.org','addr'],
+  ['Cc: Alexei Starovoitov <ast@kernel.org>, Andrii Nakryiko <andrii@kernel.org>','addr'],
+  ['Subject: [PATCH bpf-next v2 2/3] selftests/bpf: cover foo() with bar set','subj'],
+  ['',''],
+  ['The foo() selftest never exercises the path where bar is set, so a','body'],
+  ['regression there would pass CI unnoticed. Add a subtest that sets','body'],
+  ['bar and asserts foo() returns -EINVAL.','body'],
+  ['',''],
+  ['Signed-off-by: You <you@example.com>','sob'],
+  ['Reviewed-by: A Reviewer <rev@kernel.org>','rb'],
+  ['---','scis'],
+  ['v2: split the helper out per Alexei; fix the typo in the commit log.','log'],
+  ['v1: https://lore.kernel.org/bpf/20240101-foo@example.com','log'],
+  ['',''],
+  [' tools/testing/selftests/bpf/prog_tests/foo.c | 18 ++++++++','stat'],
+  [' 1 file changed, 18 insertions(+)','stat'],
+  ['',''],
+  ['diff --git a/.../foo.c b/.../foo.c','diff'],
+  ['@@ -10,6 +10,18 @@ void test_foo(void)','diff'],
+  ['+\tif (bar_set)','diff'],
+  ['+\t\tASSERT_EQ(foo(), -EINVAL, "foo_bar");','diff']
+];
+var PMX={
+  subj:'<b>Subject.</b> <code>[PATCH …]</code> marks it a patch so it’s filtered, not read as discussion. <b>bpf-next</b> = the target tree. <b>v2</b> = second revision. <b>2/3</b> = patch 2 of a 3-patch series. Then <code>subsystem: short imperative summary</code>, ~50 chars.',
+  addr:'<b>Addressing.</b> <b>To:</b> the subsystem list; <b>Cc:</b> the maintainers <code>get_maintainer.pl</code> named. Public, never BCC — <b>lore.kernel.org</b> is the permanent archive of record.',
+  body:'<b>The commit message.</b> Explains <b>why</b>, not what — the diff already shows what changed. This is what a future bisector reads to understand the reasoning. Imperative mood, wrapped at ~72 cols.',
+  sob:'<b>Signed-off-by.</b> Your DCO certification that you have the right to submit this under the kernel’s license. <b>Required</b> — without it the patch literally cannot be applied.',
+  rb:'<b>Reviewed-by / Acked-by.</b> Trailers that accumulate from reviewers across revisions. <code>b4 trailers -u</code> pulls them back into your commits for the next version.',
+  scis:'<b>The “---” scissors.</b> Everything <i>below</i> it (until the diff) is stripped when the patch is applied — it never enters git history. The place for notes to reviewers.',
+  log:'<b>The changelog.</b> Placed under <code>---</code> so it helps reviewers but doesn’t pollute the permanent commit message. Always link the previous version on lore.',
+  stat:'<b>The diffstat.</b> Auto-generated summary of files touched and line counts — lets a reviewer gauge scope at a glance before reading the diff.',
+  diff:'<b>The unified diff.</b> Plain text, never line-wrapped or HTML-mangled. A corrupted diff won’t apply with <code>git am</code> and is dead on arrival.'
+};
+var elPmail=document.getElementById('pmail'), elPmEx=document.getElementById('pmExplain'), pmSel=null;
+function pmRender(){ var html='';
+  PM.forEach(function(l,i){ var k=l[1]; var txt=l[0]===''?' ':l[0].replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    html+='<div class="pl'+(k&&pmSel===k?' sel':'')+'" data-i="'+i+'">'+txt+'</div>'; });
+  elPmail.innerHTML=html;
+  [].forEach.call(elPmail.children,function(c){ var k=PM[+c.getAttribute('data-i')][1]; if(!k){c.style.cursor='default';return;}
+    c.onclick=function(){ pmSel=k; pmRender(); elPmEx.innerHTML=PMX[k]; }; });
+}
+pmRender();
+
+/* ── review gauntlet (slide 13) ──────────────────────────────────────────── */
+var GISSUES=[
+  {key:'html',label:'HTML email',resp:'NAK — your client sent HTML; the patch is corrupted and won’t apply. Use plain text / git send-email.'},
+  {key:'nosob',label:'No Signed-off-by',resp:'Can’t take this without a Signed-off-by (DCO). Add it and resend.'},
+  {key:'checkpatch',label:'checkpatch warnings',resp:'Please run scripts/checkpatch.pl --strict — lines over 100 cols and a missing brace here.'},
+  {key:'multi',label:'Many changes in one patch',resp:'This patch does three unrelated things. Split it into a series — one logical change each.'},
+  {key:'xmas',label:'Reverse-xmas-tree (netdev)',resp:'netdev orders locals longest-line-first ("reverse christmas tree"). Reorder the declarations.'},
+  {key:'window',label:'Sent during merge window',resp:'net-next/bpf-next is closed during the merge window — resend after rc1.'},
+  {key:'toppost',label:'Top-posted reply',resp:'Please don’t top-post; reply inline below the quoted text, trimming the rest.'}
+];
+var gActive={}, gIdx=-1, gSteps=[], gTimer=null;
+var elGTog=document.getElementById('gToggles'), elGSteps=document.getElementById('gSteps'), elGState=document.getElementById('gState');
+GISSUES.forEach(function(it){ var b=document.createElement('button'); b.className='btn'; b.textContent=it.label;
+  b.onclick=function(){ gActive[it.key]=!gActive[it.key]; b.classList.toggle('on',gActive[it.key]); gReset(); };
+  elGTog.appendChild(b); });
+function gBuild(){
+  var act=GISSUES.filter(function(i){return gActive[i.key];});
+  var steps=[{x:'▸',t:'Maintainer opens your series from patchwork',cls:''}];
+  if(act.length===0){
+    steps.push({x:'✓',t:'checkpatch --strict: clean',cls:'done'});
+    steps.push({x:'✓',t:'Signed-off-by present (DCO ok)',cls:'done'});
+    steps.push({x:'✓',t:'one logical change · applies to bpf-next/master',cls:'done'});
+    steps.push({x:'⏚',t:'Reply: “Applied, thanks.”',cls:'',exit:1,verdict:{cls:'good',msg:'✓ ACCEPTED — applied to bpf-next, Reviewed-by added. The clean path.'}});
+  } else {
+    act.forEach(function(i){ steps.push({x:'✗',t:i.label,cls:'bad',resp:i.resp}); });
+    steps.push({x:'⏚',t:'Thread paused',cls:'',exit:1,verdict:{cls:'bad',msg:'✗ Needs a v2 — fix the flagged issues and resend. Not hostile; just the reading you skipped.'}});
+  }
+  return steps;
+}
+function gRender(){ var html='';
+  gSteps.forEach(function(s,k){ var cls=k<gIdx?'done':(k===gIdx?(s.cls==='bad'?'bad cur':'cur'):'');
+    html+='<div class="ln '+cls+'"><span class="lx">'+s.x+'</span><span>'+s.t+'</span></div>'; });
+  elGSteps.innerHTML=html;
+  var s=gSteps[gIdx], st='';
+  if(s&&s.resp) st='<span class="vd bad">'+s.resp+'</span>';
+  else if(s&&s.exit&&s.verdict) st='<span class="vd '+s.verdict.cls+'">'+s.verdict.msg+'</span>';
+  elGState.innerHTML=st;
+}
+function gStep(){ if(gIdx<gSteps.length-1){gIdx++;gRender();} return gIdx<gSteps.length-1; }
+function gReset(){ if(gTimer){clearInterval(gTimer);gTimer=null;} gSteps=gBuild(); gIdx=-1; gRender();
+  var b=document.getElementById('gRun'); if(b)b.textContent='Run review ▸'; }
+function gRun(){ var b=document.getElementById('gRun');
+  if(gTimer){clearInterval(gTimer);gTimer=null;b.textContent='Run review ▸';return;}
+  if(gIdx>=gSteps.length-1){gSteps=gBuild();gIdx=-1;} b.textContent='❚❚';
+  gTimer=setInterval(function(){ if(!gStep()){clearInterval(gTimer);gTimer=null;b.textContent='↻ Again';} },900); }
+document.getElementById('gRun').onclick=gRun;
+document.getElementById('gReset').onclick=gReset;
+gReset();
+
+/* ── patch journey player (slide 16) ─────────────────────────────────────── */
+var E2E=[
+  {z:'send',t:'git send-email / b4 send',p:'<span class="bl">[PATCH bpf-next 1/1]</span> selftests/bpf: cover foo() → <span class="g">bpf@vger.kernel.org</span> + Cc maintainers',n:'Your series is mailed to the list and the maintainers get_maintainer.pl named.'},
+  {z:'patchwork + CI',t:'tracked & tested',p:'patchwork: <b>New</b> → BPF CI builds and runs <b>test_progs</b> on the series',n:'The patch shows up in patchwork; automated CI builds and tests it before humans dig in.'},
+  {z:'review',t:'replies → v2',p:'reviewer: “split the helper” → you send <span class="k">v2</span> with a changelog under ---',n:'Review happens by reply. You iterate; trailers like Reviewed-by accumulate across versions.'},
+  {z:'applied',t:'maintainer applies',p:'applied to <span class="g">bpf-next</span> · patchwork: <b>Accepted</b>',n:'The maintainer applies your patch to their tree — the first time it lands anywhere official.'},
+  {z:'linux-next',t:'nightly integration',p:'bpf-next → <span class="g">linux-next</span> · built & fuzzed by bots overnight',n:'Integrated with every other subsystem tree and tested nightly. Breakage surfaces here, not in mainline.'},
+  {z:'merge window',t:'Linus pulls',p:'merge window: bpf-next → <span class="g">mainline</span> · ships in v6.x-<span class="k">rc1</span>',n:'During the 2-week window Linus pulls the maintainer tree into mainline.'},
+  {z:'release',t:'tagged (+ stable)',p:'released in <b>v6.x</b> · a <b>Fixes:</b> patch could also flow to <span class="g">stable</span>',n:'It ships in a numbered release — and your name is in the git log of every Linux machine on earth.'}
+];
+var elE2e=document.getElementById('e2e'), elE2ePay=document.getElementById('e2ePay'), e2eIdx=-1, e2eTimer=null;
+function e2eBuild(){ var html='';
+  E2E.forEach(function(s,k){ html+='<div class="est" data-i="'+k+'"><div class="ez">'+s.z+'</div><div class="et">'+s.t+'</div></div>'+(k<E2E.length-1?'<div class="econn">→</div>':''); });
+  elE2e.innerHTML=html; }
+function e2ePaint(){ [].forEach.call(elE2e.querySelectorAll('.est'),function(e,k){ e.classList.toggle('lit',k===e2eIdx); e.classList.toggle('done',k<e2eIdx); });
+  if(e2eIdx>=0){ var s=E2E[e2eIdx]; elE2ePay.innerHTML='<b>'+s.z+'</b> &nbsp; '+s.p+'<div style="color:var(--overlay);margin-top:7px;font-size:11.5px">'+s.n+'</div>'; }
+  else elE2ePay.innerHTML='<span style="color:var(--overlay)">Press play to follow one patch from your terminal to a tagged release.</span>';
+  document.getElementById('e2eNote').textContent=e2eIdx>=0?((e2eIdx+1)+'/'+E2E.length):''; }
+function e2eStep(){ if(e2eIdx<E2E.length-1){e2eIdx++;e2ePaint();} return e2eIdx<E2E.length-1; }
+function e2eReset(){ if(e2eTimer){clearInterval(e2eTimer);e2eTimer=null;} e2eIdx=-1; e2ePaint();
+  var b=document.getElementById('e2ePlay'); if(b)b.textContent='▶ Play'; }
+function e2ePlay(){ var b=document.getElementById('e2ePlay');
+  if(e2eTimer){clearInterval(e2eTimer);e2eTimer=null;b.textContent='▶ Play';return;}
+  if(e2eIdx>=E2E.length-1)e2eReset(); b.textContent='❚❚ Pause';
+  e2eTimer=setInterval(function(){ if(!e2eStep()){clearInterval(e2eTimer);e2eTimer=null;b.textContent='↻ Replay';} },950); }
+document.getElementById('e2ePlay').onclick=e2ePlay;
+document.getElementById('e2eStep').onclick=function(){ if(e2eTimer){clearInterval(e2eTimer);e2eTimer=null;document.getElementById('e2ePlay').textContent='▶ Play';} e2eStep(); };
+document.getElementById('e2eReset').onclick=e2eReset;
+e2eBuild(); e2ePaint();
+
+/* ── boot ────────────────────────────────────────────────────────────────── */
+(function(){ var h=parseInt((location.hash||'').replace('#',''),10); go(isFinite(h)&&h>=1?h-1:0); })();
+</script>
+</body>
+</html>
