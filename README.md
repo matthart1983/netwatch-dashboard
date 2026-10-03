@@ -20,12 +20,34 @@ Self-hosted web dashboard for [NetWatch](https://github.com/matthart1983/netwatc
 ### Docker (recommended)
 
 ```sh
-docker build -t netwatch-dashboard .
 docker run -d --name netwatch-dashboard \
   -p 3000:3000 \
   -v netwatch-data:/data \
-  netwatch-dashboard
+  ghcr.io/matthart1983/netwatch-dashboard:latest
 ```
+
+Multi-arch images (`linux/amd64`, `linux/arm64`) are published to GHCR on every `v*` release tag. Pin a version (e.g. `:0.1.0`) instead of `latest` for reproducible deploys. To build locally instead, run `docker build -t netwatch-dashboard .`.
+
+Or with Docker Compose:
+
+```yaml
+services:
+  netwatch-dashboard:
+    image: ghcr.io/matthart1983/netwatch-dashboard:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Optional. If unset, a key is generated on first start and logged.
+      NETWATCH_DASHBOARD_API_KEY: ${NETWATCH_DASHBOARD_API_KEY:-}
+    volumes:
+      - netwatch-data:/data
+
+volumes:
+  netwatch-data:
+```
+
+The container runs as a non-root user (uid 1001); `/data` holds the SQLite database and `config.json`, so keep it on a volume. The `NEXT_PUBLIC_*` variables are inlined at build time, so they have no effect on the prebuilt image (which is standalone/`local` mode); to use `core` mode, build the image yourself with `--build-arg NEXT_PUBLIC_NETWATCH_SOURCE=core --build-arg NEXT_PUBLIC_NETWATCH_CORE_URL=...`.
 
 On first start the container writes a fresh API key to `/data/config.json` and logs it. Grab it:
 
